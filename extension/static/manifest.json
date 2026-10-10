@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "IDM Replica",
+  "version": "0.1.0",
+  "description": "Detects videos and files on the pages you browse and sends them to the IDM Replica desktop app (127.0.0.1 only).",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyLNluWAemIR+RqrXMbsUbDbIlKP/Sf9yvVt2MIxUR7KGEZCluZW95Yrs8gmdwQJBzIlurK7MWqGyfJBZzerqgL47ESgyrxtEnyH2jb1djMJdsnPt0RTIcqurEfSvcAEEkXOKfS32HAPWazlZ+F++WA7DlNdgjtUVuhSDjfn2JN96ZIwJ7C3gfqoDxHPXDWlQbCtSV7NPZ/OUQe7YpsCBDiDq5j/vb3opZJpz8GMjt2wL0DuSiD8xrDvZ/uzYroxK6z9VuQcxqj6IA3/Fn/gB6OCD2HMPnk5Nx78peXsrw/eRNs2C3J1vvGyDp4TXNopTAfB5WRudBi0io9Zf5JkSGwIDAQAB",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "IDM Replica",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "permissions": [
+    "storage",
+    "webRequest",
+    "downloads",
+    "contextMenus",
+    "cookies"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

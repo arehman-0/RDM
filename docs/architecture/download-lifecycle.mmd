@@ -1,0 +1,43 @@
+%% Sequence: a single file download from start_download to completion.
+sequenceDiagram
+    autonumber
+    participant UI as App.tsx
+    participant CMD as main.rs (command)
+    participant ENG as download_to_file
+    participant W as Workers (N)
+    participant CO as Coordinator
+    participant FL as Flusher thread
+    participant NET as HTTP server
+    participant FS as Disk
+
+    UI->>CMD: invoke start_download(url, connections, savePath)
+    CMD->>ENG: spawn download_to_file(...)
+    ENG->>NET: HEAD probe (fallback: GET bytes=0-0)
+    NET-->>ENG: Content-Length + Accept-Ranges
+    ENG->>FS: preallocate set_len(total)
+    Note over ENG,FS: resume: load .idm sidecar if present, restore chunk offsets
+    ENG->>FL: spawn flusher (bounded channel)
+    ENG->>W: spawn N workers (Range: bytes=start-end)
+
+    loop per network frame
+        W->>NET: ranged GET
+        NET-->>W: bytes
+        W->>FL: send (offset, bytes)
+        W->>W: chunk.current.fetch_add(n) (queued)
+        FL->>FS: pwrite(offset, bytes)
+        FL->>FL: chunk.written.fetch_max(offset+n) (on disk)
+    end
+
+    W-->>CO: finished (slot freed)
+    CO->>CO: split_largest() -> shrink end, spawn tail worker
+    CO-->>UI: emit_all download-progress (every ~400ms; also folded into History)
+    CO->>FS: write .idm sidecar with min(current, written) per chunk
+
+    Note over CO: when downloaded == total OR all chunks done
+    CO->>FL: drop senders -> flusher drains + sync_all
+    opt integrity opt-in
+        ENG->>FS: stream file -> SHA-256 / MD5 (spawn_blocking)
+        ENG-->>UI: emit verification status
+    end
+    ENG->>FS: delete .idm sidecar
+    ENG-->>UI: emit_all download-progress (status=complete)

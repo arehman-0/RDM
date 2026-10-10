@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>IDM Replica — Options</title>
+  <link rel="stylesheet" href="common.css" />
+  <style>
+    body { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 14px; margin: 26px 0 8px; }
+    label { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+    label.check { flex-direction: row; align-items: center; gap: 8px; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .row input[type=password], .row input[type=text] { flex: 1; min-width: 200px; }
+    code { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; user-select: all; }
+    .actions { margin-top: 18px; display: flex; gap: 8px; align-items: center; }
+  </style>
+</head>
+<body>
+  <h1>IDM Replica — Options</h1>
+  <p class="dim">Everything stays on this computer: the extension only talks to IDM Replica at 127.0.0.1.</p>
+
+  <h2>1. Pair with the app</h2>
+  <p>In IDM Replica → <b>Browser integration</b> → Allowed extension IDs, paste this ID:<br /><code id="extid"></code>
+    <button id="copyid">Copy ID</button></p>
+  <label>Token (IDM Replica → Browser integration → Copy token)
+    <div class="row">
+      <input type="password" id="token" autocomplete="off" spellcheck="false" placeholder="64-character token" />
+      <button id="showtoken">Show</button>
+    </div>
+  </label>
+  <label>Bridge port (default 38917)
+    <input type="number" id="port" min="1" max="65535" />
+  </label>
+  <div class="row"><button id="test">Test connection</button></div>
+  <div class="status" style="margin-top:8px"><span class="dot" id="dot"></span><span id="conn">Not tested yet.</span></div>
+
+  <h2>2. Floating button</h2>
+  <label class="check"><input type="checkbox" id="floating" /> Show a "Download" button over playing videos</label>
+  <label>Hide the button on these sites (one host per line)
+    <textarea id="disabled" rows="3" spellcheck="false" placeholder="example.com"></textarea>
+  </label>
+
+  <h2>3. Take over Chrome downloads</h2>
+  <label class="check"><input type="checkbox" id="intercept" /> Download everything with IDM Replica
+    instead of Chrome (if the app isn't running, Chrome downloads normally)</label>
+  <label>Minimum size: <b id="minmb-label"></b>
+    <input type="range" id="minmb" min="0" max="100" step="1" />
+  </label>
+  <label>Only these file types (empty = every type)
+    <input type="text" id="allow" spellcheck="false" placeholder="zip, iso, exe, mp4" />
+  </label>
+  <label>Let Chrome handle these types (never take them over)
+    <input type="text" id="deny" spellcheck="false" placeholder="pdf, crx" />
+  </label>
+  <label>Never take over downloads from these sites (one host per line)
+    <textarea id="neversites" rows="3" spellcheck="false" placeholder="bank.example"></textarea>
+  </label>
+  <p class="dim">Chrome always keeps downloads the app can't fetch again: blob:/data: downloads made inside the page,
+    form (POST) downloads, and incognito downloads.</p>
+
+  <div class="actions"><button id="save" class="primary">Save</button><span class="msg" id="msg"></span></div>
+  <script src="options.js"></script>
+</body>
+</html>

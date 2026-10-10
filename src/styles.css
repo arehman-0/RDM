@@ -1,0 +1,665 @@
+:root {
+  --bg: #0d1117;
+  --bg-elev: #161b22;
+  --bg-elev2: #1c2230;
+  --border: #2a3140;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --accent: #2f81f7;
+  --accent-2: #1f6feb;
+  --green: #3fb950;
+  --red: #f85149;
+  --amber: #d29922;
+  --radius: 12px;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 22px 24px 60px;
+}
+
+/* ---- Top bar ---- */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 22px;
+}
+.brand {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.logo {
+  font-size: 28px;
+  background: linear-gradient(135deg, var(--accent), #8957e5);
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: white;
+}
+.brand h1 {
+  margin: 0;
+  font-size: 20px;
+}
+.brand p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.globalstats {
+  display: flex;
+  gap: 26px;
+}
+.globalstats > div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.stat-num {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.stat-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ---- Composer ---- */
+.composer {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.url-input {
+  flex: 1;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 13px 16px;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+.url-input:focus {
+  border-color: var(--accent);
+}
+button.primary {
+  background: var(--accent-2);
+  border: none;
+  border-radius: var(--radius);
+  color: white;
+  font-weight: 600;
+  padding: 0 24px;
+  cursor: pointer;
+  font-size: 14px;
+}
+button.primary:hover {
+  background: var(--accent);
+}
+button.primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+button.ghost {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0 16px;
+  cursor: pointer;
+  font-size: 13px;
+}
+button.ghost:hover {
+  border-color: var(--accent);
+}
+
+.savepath-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: -4px 0 14px;
+}
+.savepath-hint code {
+  background: var(--bg-elev2);
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+.linklike {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+}
+
+/* ---- Controls ---- */
+.controls {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  margin-bottom: 26px;
+  flex-wrap: wrap;
+}
+.slider-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+  min-width: 240px;
+}
+.slider-wrap b {
+  color: var(--accent);
+}
+.slider-wrap input[type="range"] {
+  accent-color: var(--accent);
+}
+.dir-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.dir-input {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.dir-input.area {
+  resize: vertical;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  line-height: 1.5;
+}
+.controls.advanced {
+  align-items: stretch;
+}
+
+/* ---- Dashboard ---- */
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.empty {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 60px 0;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+.empty p {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+/* ---- Card ---- */
+.card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+.card.status-complete {
+  border-color: rgba(63, 185, 80, 0.5);
+}
+.card.status-error {
+  border-color: rgba(248, 81, 73, 0.5);
+}
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+.title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 7px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+}
+.badge.yt {
+  background: #ff000022;
+  color: #ff6b6b;
+}
+.badge.file {
+  background: #2f81f722;
+  color: var(--accent);
+}
+.fname {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.actions button {
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.actions button:hover {
+  border-color: var(--accent);
+}
+.actions button.danger:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+/* ---- Progress bar ---- */
+.bar-outer {
+  position: relative;
+  height: 22px;
+  background: var(--bg-elev2);
+  border-radius: 7px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.bar-inner {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  transition: width 0.35s ease;
+}
+.status-complete .bar-inner {
+  background: linear-gradient(90deg, #2ea043, var(--green));
+}
+.status-error .bar-inner {
+  background: var(--red);
+}
+/* Restored after a restart / waiting for its scheduled time. */
+.card.status-interrupted {
+  border-color: rgba(210, 153, 34, 0.5);
+}
+.status-interrupted .bar-inner {
+  background: var(--amber);
+}
+.status-interrupted .status-text,
+.status-scheduled .status-text {
+  color: var(--amber);
+}
+.actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.actions button:disabled:hover {
+  border-color: var(--border);
+}
+.dashboard-tools {
+  display: flex;
+  justify-content: flex-end;
+}
+.schedule-wrap input[type="datetime-local"] {
+  color-scheme: dark;
+}
+.bar-text {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  flex-wrap: wrap;
+}
+.status-text {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---- Segmentation visualization ---- */
+.stream-block {
+  margin-top: 12px;
+}
+.stream-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.segments {
+  position: relative;
+  height: 10px;
+  background: var(--bg-elev2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.seg-track {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-right: 1px solid var(--bg);
+  background: rgba(255, 255, 255, 0.04);
+}
+.seg-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.35s ease;
+}
+.seg-fill.done {
+  background: var(--green);
+}
+.seg-fill.failed {
+  background: var(--red);
+}
+
+.error-line {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--red);
+  background: rgba(248, 81, 73, 0.08);
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+/* ---- Verify checkbox row ---- */
+.check-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.check-wrap input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+}
+
+/* ---- Integrity line ---- */
+.integrity {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.integrity code {
+  background: var(--bg-elev2);
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+.integrity.ok {
+  color: var(--green);
+}
+.integrity.bad {
+  color: var(--red);
+  font-weight: 700;
+}
+.integrity.warn {
+  color: var(--amber);
+  word-break: break-all;
+}
+
+/* ---- Toast ---- */
+.toast {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  padding: 11px 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* ---- Form validation & notices ---- */
+.url-input.invalid {
+  border-color: var(--red);
+}
+.field-error {
+  font-size: 12px;
+  color: var(--red);
+  margin: -4px 0 12px 4px;
+}
+.notice {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.45;
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin: -2px 0 14px;
+}
+.notice.error {
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.45);
+  color: var(--text);
+}
+.notice-hint {
+  color: var(--text-dim);
+  margin-top: 4px;
+  user-select: text;
+}
+.notice-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.notice-actions button.ghost {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* ---- Queue controls on waiting cards ---- */
+.card.status-held {
+  border-color: rgba(210, 153, 34, 0.35);
+}
+.status-held .status-text {
+  color: var(--amber);
+}
+.queue-controls {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  margin-right: 4px;
+}
+.queue-controls button {
+  padding: 6px 8px;
+  line-height: 1;
+}
+.actions select.priority {
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 5px 6px;
+  font-size: 12px;
+  color-scheme: dark;
+}
+
+/* ---- Empty state tips ---- */
+.empty-tips {
+  list-style: none;
+  padding: 0;
+  margin: 18px auto 0;
+  max-width: 520px;
+  text-align: left;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.empty-tips li {
+  margin: 6px 0;
+}
+.empty-tips b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---- Log panel ---- */
+.log-panel {
+  margin-top: 18px;
+}
+.log-badge {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--amber);
+}
+.log-lines {
+  margin-top: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+  user-select: text;
+}
+.log-line {
+  display: flex;
+  gap: 10px;
+  padding: 1px 0;
+}
+.log-line.dim,
+.log-time {
+  color: var(--text-dim);
+}
+.log-level {
+  width: 42px;
+  flex-shrink: 0;
+}
+.log-msg {
+  word-break: break-word;
+}
+.lvl-warn .log-level {
+  color: var(--amber);
+}
+.lvl-error .log-level,
+.lvl-error .log-msg {
+  color: var(--red);
+}
+
+/* ---- Browser integration ---- */
+.bridge-panel {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+.bridge-panel > .linklike {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+}
+.bridge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.bridge-dot.on {
+  background: var(--green);
+}
+.bridge-status-inline {
+  color: var(--text-dim);
+}
+.bridge-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bridge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.bridge-row b {
+  color: var(--accent);
+}
+.bridge-row button {
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.bridge-row button:hover {
+  border-color: var(--accent);
+}
+.bridge-token {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+}
+.bridge-requests {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 26px;
+}
+.card.bridge-request {
+  border-color: var(--accent);
+}
+.bridge-request .status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

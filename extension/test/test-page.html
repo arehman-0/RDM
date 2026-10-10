@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>IDM Replica extension — test page</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; }
+    section { margin: 28px 0; padding: 12px 16px; border: 1px solid #ccc; border-radius: 8px; }
+    h2 { font-size: 16px; margin: 0 0 6px; }
+    p.expect { color: #555; margin: 4px 0 10px; }
+    video { display: block; background: #000; }
+  </style>
+</head>
+<body>
+  <h1>IDM Replica extension test page</h1>
+  <p>Served by <code>node test/serve.mjs</code>. Each section says what the extension should do.</p>
+
+  <section id="s1">
+    <h2>1. Plain MP4 &lt;video&gt;</h2>
+    <p class="expect">Popup lists <b>sample.mp4</b> (VIDEO, ~2 MB). Hover the playing video → "⬇ Download" at its top-right.</p>
+    <video id="v1" controls muted loop width="640" height="360" src="/media/sample.mp4"></video>
+  </section>
+
+  <section id="s2">
+    <h2>2. blob: video (like MSE players)</h2>
+    <p class="expect">The element's src is <code>blob:</code>. Popup lists the fetched <b>blob-source.mp4</b> (sniffed from the network) and a
+      "Page stream" entry; sending the page stream shows "This page streams its video through the player (blob:)…".</p>
+    <video id="v2" controls muted loop width="640" height="360"></video>
+  </section>
+
+  <section id="s3">
+    <h2>3. Dynamically inserted video (after 3 s)</h2>
+    <p class="expect">After ~3 s the popup also lists <b>dynamic.mp4</b>.</p>
+    <div id="dyn">(waiting…)</div>
+  </section>
+
+  <section id="s4">
+    <h2>4. Video inside an iframe</h2>
+    <p class="expect">Popup lists <b>iframe.mp4</b>; the floating button also works inside the frame.</p>
+    <iframe src="/iframe.html" width="680" height="400" style="border:1px solid #ccc"></iframe>
+  </section>
+
+  <section id="s5">
+    <h2>5. Tiny video (filtered)</h2>
+    <p class="expect"><b>tiny.mp4</b> (&lt; 100 KB, 1 s) must NOT appear.</p>
+    <video controls muted width="160" height="90" src="/media/tiny.mp4"></video>
+  </section>
+
+  <section id="s6">
+    <h2>6. File link (context menu / interception)</h2>
+    <p class="expect">Right-click → "Download with IDM Replica". With interception ON (Options, min 1 MB), a normal click goes
+      to the app instead of Chrome; with the app closed, Chrome downloads it normally.</p>
+    <a href="/media/test-2mb.bin">Download test-2mb.bin (2 MB)</a>
+  </section>
+
+  <section id="s7">
+    <h2>7. HLS stream (.m3u8)</h2>
+    <p class="expect">The popup lists <b>index.m3u8</b> (HLS) once — not its .ts segments. Hover the video →
+      ⬇ Download → pick <b>index.m3u8</b> (or "Download page video (best)"): the app downloads it with yt-dlp as one
+      job and the card ends as an .mp4 of about 12 s. (If Chrome can't play HLS here, the video stays black; the
+      playlist is still requested and listed.)</p>
+    <video id="v7" controls muted width="640" height="360" src="/media/hls/index.m3u8"></video>
+    <p><a href="/media/hls/index.m3u8">index.m3u8 (direct link)</a></p>
+  </section>
+
+  <script src="/test-page.js"></script>
+</body>
+</html>

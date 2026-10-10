@@ -1,0 +1,259 @@
+# IDM Replica — Dynamic Segmentation Download Manager
+
+A cross-platform download manager (an "IDM killer") built with **Rust + Tokio**
+(engine) and **Tauri + React/TypeScript** (UI). It implements true IDM-style
+**Dynamic File Segmentation**, plus a YouTube dual-stream + FFmpeg muxing
+pipeline.
+
+## Features
+
+- **Dynamic File Segmentation** — `HEAD` probe → pre-allocate → spawn `N` ranged
+  workers → when a worker finishes early, the largest remaining chunk is split
+  in half and a new worker takes the tail. Connections stay saturated to the
+  last byte.
+- **Concurrent positioned writes** — every worker writes straight to its byte
+  offset via OS positioned I/O (`seek_write` / `write_at`) through one dedicated
+  flusher thread. No shared file cursor, no `Mutex<File>` throughput cliff.
+- **Resilient** — per-read timeouts, exponential-backoff retry on dropped
+  connections, graceful pause/resume/cancel.
+- **YouTube** — one `yt-dlp -J` call resolves the best video-only + audio-only
+  streams; both download in parallel (each fully segmented); FFmpeg stream-copies
+  them into one `.mp4` (`-c copy`, no re-encode) and the temp files are cleaned up.
+  The speed limit is a **total** cap shared by both streams; cancel also stops
+  `yt-dlp` mid-extraction (whole process tree).
+- **Custom headers** (Advanced) — sent on every request, including for video
+  sites: they are passed to `yt-dlp` (`--add-header`) and to both stream
+  downloads. Mirrors and checksum verification apply to plain files only.
+- **Live UI** — overall + per-thread segment bars, MB/s, ETA, connection slider
+  (1–16), all streamed over Tauri IPC events.
+
+## Project layout
+
+```
+F:\IDM_replica
+├── index.html
+├── package.json            # React / Tauri / Vite deps
+├── vite.config.ts
+├── tsconfig.json
+├── src/                    # Frontend
+│   ├── main.tsx
+│   ├── App.tsx             # Composition + card command dispatch
+│   ├── types.ts            # IPC payload types (mirror the Rust structs)
+│   ├── components/         # AddDownloadForm, SettingsPanel, DownloadList,
+│   │                       # DownloadCard, SegmentBars, EmptyState, LogPanel, Header
+│   ├── hooks/              # useDownloadEvents, useTauriEvent, useSettings, useLogs, useToast
+│   ├── lib/                # Pure logic + Vitest tests: cards (reducer), status, format, input
+│   └── styles.css
+└── src-tauri/              # Backend
+    ├── Cargo.toml          # Tokio / reqwest / tauri / serde …
+    ├── build.rs
+    ├── tauri.conf.json
+    └── src/
+        ├── main.rs         # Tauri commands + IPC bridge + YouTube pipeline
+        ├── bridge.rs       # Browser-extension HTTP API on 127.0.0.1 (BridgeHost trait)
+        ├── downloader.rs   # The segmentation engine (core)
+        ├── queue.rs        # Queue: concurrency cap, scheduling (QueueHost trait)
+        ├── history.rs      # Persistence: downloads.json, restore rules (StateStore trait)
+        ├── youtube.rs      # yt-dlp extraction layer
+        ├── muxer.rs        # FFmpeg copy-mux layer
+        ├── opener.rs       # Open file / show in folder (validated, id-only)
+        ├── logs.rs         # tracing layer feeding the in-app log panel
+        └── process.rs      # Spawning external tools (no console, tree kill)
+```
+
+## Prerequisites
+
+- **Rust** (stable) and **Node 18+**.
+- **Tauri system deps** — see https://tauri.app/v1/guides/getting-started/prerequisites
+  (on Windows: WebView2, already present on Win 11; the MSVC build tools).
+- **Tauri CLI:** `npm i -g @tauri-apps/cli` (or use the dev-dependency via `npx`).
+- **Runtime extras for YouTube** (optional, only for stream-site URLs):
+  - [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on `PATH`
+  - [`ffmpeg`](https://ffmpeg.org/download.html) on `PATH`
+  - The app detects their absence and returns a clear error for plain file
+    downloads it isn't needed.
+
+## Setup & run
+
+```bash
+npm install
+
+# One-time: generate the app icons Tauri embeds at build time.
+# (Tauri's generate_context! requires the icon files referenced in
+#  src-tauri/tauri.conf.json to exist.)
+npx @tauri-apps/cli icon path/to/any-1024x1024.png
+
+# Dev (hot-reload UI + Rust):
+npm run tauri dev
+
+# Production bundle:
+npm run tauri build
+```
+
+> If you skip the icon step, `npm run tauri icon` (with the default Tauri logo)
+> or dropping any PNG/ICO into `src-tauri/icons/` with the names listed in
+> `tauri.conf.json` will satisfy the build.
+
+## How the engine works (the IDM algorithm)
+
+1. **Init** — `HEAD` (with a `Range: bytes=0-0` fallback) gets `Content-Length`
+   and confirms `Accept-Ranges: bytes`. No range support → single-stream
+   fallback.
+2. **Pre-allocate** — `File::set_len(total)` reserves the full extent so the OS
+   doesn't fragment the file as workers write scattered offsets.
+3. **Spawn** — divide into `N` equal chunks; spawn `N` async workers, each
+   streaming a `Range: bytes=start-end` request directly to disk.
+4. **Dynamic split** — a worker that finishes signals the coordinator, which
+   finds the chunk with the most *remaining* bytes and atomically shrinks its
+   `end` to the midpoint while spawning a fresh worker on `[mid, old_end)`.
+   `current`/`end` are `AtomicU64`, so the victim worker simply stops at the new
+   boundary — no locks on the hot path.
+
+### Thread-safety model
+
+- Hot path (streaming) is lock-free: each worker only touches its own chunk's
+  atomics.
+- The chunk *list* is behind a `tokio::Mutex` touched only on split/snapshot.
+- Disk writes are funneled to **one** flusher thread doing positioned writes, so
+  two writers can never corrupt each other's region, and writes are idempotent
+  (a re-fetched overlap after a split just rewrites identical bytes).
+
+## IPC surface
+
+Commands (`invoke`):
+- `start_download({ url, connections, saveDir?, savePath?, speedLimit?, verify?,
+  expectedChecksum?, headers?, mirrors?, startAt? })` → `{ id, kind, fileName }`
+  (`startAt` = epoch seconds for a scheduled start)
+- `pause_download({ id })`, `resume_download({ id })`, `cancel_download({ id })` — on a
+  *waiting* entry, pause/resume hold/release it in its queue position
+- `set_speed_limit({ id, bytesPerSec })`, `set_max_concurrent({ max })`
+- `list_history()` → `JobRecord[]` — every persisted download (called once on mount)
+- `remove_history_entry({ id })` — forget a finished/failed/interrupted download
+  (files on disk are left alone)
+- `clear_completed()` → removed ids — forget every completed/canceled download
+- `retry_download({ id })` — restart an interrupted/failed/canceled download; a
+  plain file resumes from its `.idm` sidecar
+- `move_in_queue({ id, delta })` — reorder a waiting entry (within its priority band)
+- `set_queue_priority({ id, priority: "high"|"normal"|"low" })` — higher starts first
+- `open_download({ id, target: "file"|"folder" })` — open the finished file / show it in
+  its folder. Takes only an id: the path comes from the history record and must be
+  inside that download's folder; programs/scripts are only revealed, never opened
+- `recent_logs()` → `LogLine[]` — backlog for the log panel
+- `pick_save_path({ defaultName, defaultDir? })`, `check_prerequisites()`,
+  `default_save_dir()`, `suggested_connections()`
+
+Events (`listen`):
+- `download-progress` → `ProgressPayload` (per job: bytes, speed, ETA, %, status,
+  per-thread segments, optional `warnings`)
+- `youtube-status` → mux/extract lifecycle for grouped YouTube downloads
+- `queue-status` → `{ id, fileName, status: queued|scheduled|held|starting|canceled,
+  position, startAt?, priority, held }`
+- `history-removed` → `{ ids }`
+- `log-line` → `{ ts, level, target, message }` (INFO+ from the app, WARN+ from libraries)
+
+Browser bridge (`bridge.rs`) — commands:
+- `get_bridge_info()` / `set_bridge_settings({ settings: { enabled, allowedExtensionIds,
+  askBeforeStart } })` / `regenerate_token()` → `BridgeInfo { settings, listening, port,
+  address, error, token, defaultPort, protocol }`
+- `list_bridge_requests()` → `PendingRequest[]`; `accept_bridge_request({ id })`,
+  `dismiss_bridge_request({ id })`
+
+Browser bridge — events: `bridge-status` → `BridgeInfo`; `bridge-request` →
+`PendingRequest { id, status: "pending-confirm", url, pageUrl, fileName, kind, mediaType,
+size, headerNames, hasCookies, receivedAt }`; `bridge-request-removed` → `{ id }`.
+
+### Browser bridge HTTP API (for the extension)
+
+A localhost-only HTTP server inside the app (`127.0.0.1`, port **38917**, or the
+next free one up to 38927 — shown in *Browser integration*). Every request except
+`GET /v1/ping` needs `X-IDM-Token: <token>` (Copy token in the panel; stored in
+`bridge.json` in the app data dir). A request with an `Origin` header is refused
+unless it is `chrome-extension://<allowed id>`; bodies are capped at 64 KB; only
+http(s) URLs are accepted. Cookies/headers are used for that one job and never
+logged or saved.
+
+```bash
+curl -s http://127.0.0.1:38917/v1/ping
+```
+
+```bash
+curl -s -H "X-IDM-Token: $TOKEN" -H "Content-Type: application/json" -d '{"url":"https://example.com/file.zip","referer":"https://example.com/","fileName":"file.zip"}' http://127.0.0.1:38917/v1/download
+```
+
+Endpoints:
+- `GET /v1/ping` → `{app, version, bridge:1}`. No token needed.
+- `GET /v1/auth` → `204` if the token is right. It has no side effects.
+- `POST /v1/download` takes `{url?, pageUrl?, referer?, userAgent?, cookies?, headers?, fileName?, kind?: "auto"|"file"|"stream", mediaType?, size?, quality?, source?}`.
+  It returns `{ok:true, id, fileName, queued, status: "queued"|"pending-confirm", duplicate}`.
+- `POST /v1/batch {items:[…]}` → `{ok, results:[…]}`. Validation is all-or-nothing, and each item gets its own result.
+
+Field rules:
+- **`kind:"stream"`**: either a known video page (YouTube, Vimeo, X, Facebook
+  watch/reel/videos/fb.watch, Instagram posts/reels, Reddit posts/v.redd.it, Twitch
+  VODs and clips, Dailymotion, TikTok), or a direct HLS/DASH manifest (`.m3u8` /
+  `.mpd`, or an HLS/DASH `mediaType`).
+  - yt-dlp downloads the manifest itself as one job. It sends Referer, User-Agent and
+    Cookie with `--add-header`. Cancel kills yt-dlp and its children.
+  - With `kind:"auto"`, a manifest URL also takes this path, so it is never saved as
+    playlist text.
+- **`quality`**: `"best"` (default), `"audio"`, or a height (`"1080"`, `"720p"`,
+  144–4320). It applies to stream jobs.
+- **`source`** (default `"user-action"`):
+  - `"takeover"`: Chrome's own download, handed over by the extension. It starts at
+    once, without a confirm card. This only applies when the request carries the
+    allowed extension's `Origin` (otherwise it counts as a user action), and only for
+    up to 20 starts per 10 s. Beyond that, take-overs wait as pending-confirm. The
+    setting *Confirm browser take-over downloads* (default off) makes every take-over
+    wait.
+  - `"user-action"` (floating button, context menu, popup) and `"page-scan"` ("download
+    all") follow *Ask before starting*. At most 50 of them can wait at once (`app_busy`
+    after that).
+  - `"command-line"`: a URL passed to a second app launch, which always asks.
+- The same URL arriving again within 5 s gets the first result back with `duplicate:true`.
+- Every filename hint goes through `safe_file_name`. The engine refuses to write
+  outside the download folder, and a yt-dlp output outside it is rejected.
+
+Error codes (every error is `{ok:false, code, message}`, plus `error` with the same text):
+
+| code | HTTP | when |
+|---|---|---|
+| `bad_token` | 401 | `X-IDM-Token` missing or wrong |
+| `origin_not_allowed` | 403 | `Origin` isn't an allowed `chrome-extension://<id>` |
+| `bad_host` | 403 | `Host` isn't 127.0.0.1/localhost (DNS rebinding) |
+| `bad_request` | 400 | malformed JSON, unknown field, bad header/quality/source |
+| `bad_url` | 400 | URL missing, not http(s), or malformed |
+| `unsupported_site` | 400 | `kind:"stream"` for a page yt-dlp isn't set up for |
+| `unsupported_media_type` | 415 | body isn't `application/json` |
+| `payload_too_large` | 413 | body over 64 KB |
+| `app_busy` | 429 | too many requests waiting for confirmation |
+| `ytdlp_missing` / `ffmpeg_missing` | 503 | the stream path needs a tool that isn't installed |
+| `drm_protected` | — | reported on the job (its error text), not in the HTTP response: DRM is found only while yt-dlp runs |
+| `not_found` | 404 | unknown endpoint |
+| `internal` | 500 | anything else |
+
+Only one copy of the app runs at a time. A second launch focuses the existing window,
+hands over any `http(s)` URL it was given (as a confirm card), and exits. As a second
+safeguard, an OS file lock on `app.lock` in the data dir is taken before any file is
+opened. The OS releases it on a crash, so a stale lock never blocks startup.
+
+## Persistence
+
+Downloads, the queue and schedules survive closing the app. State lives in one
+JSON file, `downloads.json`, in the app data dir (Windows:
+`%APPDATA%\com.idmreplica.app\`), replaced atomically (tmp + fsync + rename)
+at most about once a second while things change, and on exit. On relaunch:
+
+- downloads that were running (or waiting without a schedule) show as
+  **Interrupted — resumable**; **Resume** continues a plain file from its `.idm`
+  sidecar (never from byte 0). YouTube jobs re-extract, because their direct
+  stream URLs expire; their stream downloads start over.
+- scheduled downloads come back by themselves: future ones wait for their time,
+  overdue ones start under the normal concurrency cap.
+- an unreadable `downloads.json` is renamed `downloads.json.corrupt-<time>` and
+  the app starts with an empty list.
+
+**Sensitive data:** custom header *values* (auth tokens, cookies) are never
+written to disk — only the header *names*. A restored download that needed
+headers must be added again with them. URLs and mirror URLs *are* stored
+(resume needs them; the `.idm` sidecar stores the URL too), so a pre-signed URL
+carrying a token is kept until you remove the entry.

@@ -1,0 +1,44 @@
+%% Persistence: a download's lifecycle across an app restart.
+%% Statuses are JobStatus in history.rs; the file is <app data dir>/downloads.json.
+stateDiagram-v2
+    [*] --> Queued: start_download (no startAt / past startAt)
+    [*] --> Scheduled: start_download (future startAt)
+    Scheduled --> Queued: timer fires (QueueHost::arm_timer)
+    Queued --> Downloading: slot free (QueueManager::promote -> launch)
+    Downloading --> Paused: pause_download
+    Paused --> Downloading: resume_download
+    Downloading --> Muxing: YouTube streams done
+    Downloading --> Complete
+    Muxing --> Complete
+    Downloading --> Error
+    Downloading --> Canceled: cancel_download
+    Queued --> Canceled: cancel_download (cancel_pending)
+
+    state "App closed or killed" as Closed
+    Downloading --> Closed
+    Paused --> Closed
+    Muxing --> Closed
+    Queued --> Closed
+    Scheduled --> Closed
+
+    state "Relaunch: history::restore()" as Restore
+    Closed --> Restore
+    Restore --> Interrupted: was running, or queued without startAt
+    Restore --> Scheduled: startAt in the future (timer re-armed)
+    Restore --> Queued: startAt already passed (queue cap applies)
+    Restore --> Interrupted: needs header values (not saved to disk)
+
+    Interrupted --> Queued: retry_download (same path -> .idm sidecar -> resume from current)
+    Error --> Queued: retry_download
+    Canceled --> Queued: retry_download (file was deleted -> fresh start)
+
+    Complete --> [*]: clear_completed / remove_history_entry
+    Canceled --> [*]: clear_completed / remove_history_entry
+    Error --> [*]: remove_history_entry
+    Interrupted --> [*]: remove_history_entry (partial file + sidecar kept)
+
+    note right of Restore
+        Sidecar records min(current, written):
+        only bytes the flusher already wrote,
+        so a kill never leaves holes.
+    end note

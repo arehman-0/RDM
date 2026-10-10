@@ -1,0 +1,29 @@
+%% State of a single Chunk through its lifecycle.
+%% The split transition is the atomic store on `end`.
+stateDiagram-v2
+    [*] --> Running: worker spawned (Range: current-end)
+
+    Running --> Splitting: coordinator picks this as largest remaining
+    Splitting --> Running: victim.end.store(mid) [atomic]<br/>tail chunk [mid,end) spawned
+
+    Running --> Throttled: token bucket empty
+    Throttled --> Running: tokens refilled (await)
+
+    Running --> Retry: dropped connection / read timeout
+    Retry --> Running: exponential backoff,<br/>reconnect from current
+    Retry --> Failed: retries > MAX_RETRIES
+
+    Running --> Paused: paused flag set
+    Paused --> Running: resume Notify (re-issue from current)
+
+    Running --> Done: current >= end (or clean EOF if non-resumable)
+
+    Done --> [*]
+    Failed --> [*]
+
+    note right of Splitting
+        current/end are AtomicU64.
+        Victim reloads end each frame
+        and stops at the new midpoint.
+        Hot path stays lock-free.
+    end note

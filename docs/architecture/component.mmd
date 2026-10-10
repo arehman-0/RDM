@@ -1,0 +1,83 @@
+%% Component graph: Frontend <-> Tauri IPC <-> Backend modules <-> External tools
+%% Edges labeled with the invoke() commands and emit_all() events.
+graph LR
+    subgraph Frontend["Frontend (WebView)"]
+        APP["App.tsx<br/>dashboard + controls"]
+        BUI["BrowserIntegrationPanel + BridgeRequests<br/>(useBridge)"]
+    end
+
+    subgraph Backend["Backend (Rust / Tokio)"]
+        MAIN["main.rs<br/>commands + AppState + Ctx"]
+        Q["queue.rs<br/>QueueManager (cap, schedule)<br/>QueueHost trait"]
+        HIST["history.rs<br/>History + StateStore trait"]
+        DL["downloader.rs<br/>segmentation engine"]
+        YT["youtube.rs<br/>Extractor provider"]
+        MUX["muxer.rs<br/>ffmpeg copy-mux"]
+        PROC["process.rs<br/>spawn / tree kill"]
+        OPEN["opener.rs<br/>validated open / reveal"]
+        LOGS["logs.rs<br/>tracing layer -> ring buffer"]
+        SDL["stream_dl.rs<br/>HLS/DASH manifests via yt-dlp"]
+        LOCK["instance_lock.rs + single-instance plugin<br/>one app per data dir"]
+        SINK["ProgressSink trait<br/>(TauriSink impl)"]
+        BRIDGE["bridge.rs<br/>axum on 127.0.0.1:38917(+10)<br/>BridgeHost trait (TauriBridgeHost impl)"]
+    end
+
+    subgraph External["External processes / OS"]
+        YTDLP["yt-dlp"]
+        FFMPEG["ffmpeg"]
+        DISK["disk (positioned writes)"]
+        STATE["app data dir<br/>downloads.json"]
+        NET["HTTP servers / CDN"]
+        EXT["Chrome extension<br/>(chrome-extension://&lt;id&gt;)"]
+    end
+
+    %% React -> Rust commands
+    APP -- "invoke: start_download" --> MAIN
+    APP -- "invoke: pause/resume/cancel_download" --> MAIN
+    APP -- "invoke: set_speed_limit / set_max_concurrent" --> MAIN
+    APP -- "invoke: list_history (once, on mount)" --> MAIN
+    APP -- "invoke: retry_download / remove_history_entry / clear_completed" --> MAIN
+    APP -- "invoke: move_in_queue / set_queue_priority" --> MAIN
+    APP -- "invoke: open_download (id only)" --> MAIN
+    APP -- "invoke: recent_logs (once, on mount)" --> MAIN
+    APP -- "invoke: pick_save_path / check_prerequisites" --> MAIN
+    APP -- "invoke: default_save_dir / suggested_connections" --> MAIN
+
+    %% Rust -> React events
+    SINK -- "emit_all: download-progress" --> APP
+    MAIN -- "emit_all: youtube-status" --> APP
+    MAIN -- "emit_all: queue-status" --> APP
+    MAIN -- "emit_all: history-removed" --> APP
+    LOGS -- "emit_all: log-line" --> APP
+
+    %% Browser bridge
+    EXT -- "HTTP: GET /v1/ping, POST /v1/download, /v1/batch<br/>(X-IDM-Token)" --> BRIDGE
+    BUI -- "invoke: get_bridge_info / set_bridge_settings / regenerate_token" --> MAIN
+    BUI -- "invoke: list_bridge_requests / accept_bridge_request / dismiss_bridge_request" --> MAIN
+    MAIN --> BRIDGE
+    BRIDGE -- "BridgeHost::start -> enqueue_download (same path as start_download)" --> MAIN
+    MAIN -- "emit_all: bridge-status / bridge-request / bridge-request-removed" --> BUI
+    BRIDGE -- "bridge.json (settings + token; atomic write)" --> STATE
+
+    %% Backend wiring
+    MAIN --> Q
+    Q -- "QueueHost: launch / queue_status / arm_timer" --> MAIN
+    MAIN --> HIST
+    SINK -- "on_progress (per ~400 ms tick)" --> HIST
+    HIST -- "debounced atomic save (tmp + rename)" --> STATE
+    MAIN --> OPEN
+    OPEN -- "explorer / open / xdg-open" --> DISK
+    MAIN --> DL
+    MAIN --> YT
+    MAIN --> MUX
+    DL --> SINK
+    DL -- "ranged GET (reqwest)" --> NET
+    DL -- "flusher thread pwrite + .idm sidecar" --> DISK
+    YT --> PROC
+    MAIN --> SDL
+    SDL --> PROC
+    MAIN -- "app.lock (OS lock, before any file)" --> LOCK
+    LOCK --> STATE
+    MUX --> PROC
+    PROC -- "spawn process" --> YTDLP
+    PROC -- "spawn process" --> FFMPEG
