@@ -3,7 +3,8 @@
 import type { SendResult } from "./lib/bridge";
 import type { MediaItem } from "./lib/items";
 import { MSG } from "./lib/messages";
-import type { AllReply, ConnReply, MediaList } from "./lib/protocol";
+import { connAction } from "./lib/bridge";
+import type { AllReply, ConnReply, MediaList, PairReply } from "./lib/protocol";
 import { $, ask, fmtSize, paintConn } from "./ui";
 
 const list = $<HTMLDivElement>("list");
@@ -58,13 +59,46 @@ function render(items: MediaItem[], tabId: number): void {
   }
 }
 
+/** Ping the app and offer the one useful next step (start it / connect / options). */
+async function refreshConnection(): Promise<void> {
+  const r = await ask<ConnReply>({ type: "check-connection" });
+  paintConn($("dot"), $("conn"), r);
+  const cta = $("cta");
+  const btn = $<HTMLButtonElement>("cta-btn");
+  const action = r ? connAction(r.conn) : "none";
+  cta.hidden = action === "none";
+  btn.disabled = false;
+  if (action === "start-app") {
+    $("cta-title").textContent = "Start IDM Replica";
+    $("cta-text").textContent = "The app isn't running, so downloads stay in the browser. Open IDM Replica, then try again.";
+    btn.textContent = "Try again";
+    btn.onclick = () => void refreshConnection();
+  } else if (action === "connect") {
+    $("cta-title").textContent = "Connect to IDM Replica";
+    $("cta-text").textContent = "One click here, then Allow in the app.";
+    btn.textContent = "Connect to IDM Replica";
+    btn.onclick = async () => {
+      btn.disabled = true;
+      $("cta-text").textContent = MSG.pairWaiting;
+      const p = await ask<PairReply>({ type: "pair" });
+      say(p?.ok ? MSG.paired : p?.error ?? "No answer from the extension.", p?.ok === true);
+      await refreshConnection();
+    };
+  } else if (action === "options") {
+    $("cta-title").textContent = "Check the settings";
+    $("cta-text").textContent = "";
+    btn.textContent = "Open Options";
+    btn.onclick = () => void chrome.runtime.openOptionsPage();
+  }
+}
+
 async function main(): Promise<void> {
   $("options").addEventListener("click", (e) => {
     e.preventDefault();
     void chrome.runtime.openOptionsPage();
   });
   // Ping the app each time the popup opens (no background timers).
-  void ask<ConnReply>({ type: "check-connection" }).then((r) => paintConn($("dot"), $("conn"), r));
+  void refreshConnection();
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const tabId = tab?.id;

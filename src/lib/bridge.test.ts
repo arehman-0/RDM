@@ -32,6 +32,7 @@ const info = (over: Partial<BridgeInfo>): BridgeInfo => ({
   error: null,
   token: "t",
   defaultPort: 38917,
+  shippedExtensionIds: [],
   protocol: 1,
   ...over,
 });

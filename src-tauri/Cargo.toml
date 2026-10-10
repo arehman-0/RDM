@@ -15,20 +15,30 @@ tauri-build = { version = "1.5", features = [] }
 # --- Tauri / IPC ---
 # Allowlist is empty (the UI only uses invoke + events). `dialog` enables the
 # Rust-side Save-As API (`tauri::api::dialog`) without exposing it to JS.
-tauri = { version = "1.6", features = ["dialog"] }
+tauri = { version = "1.6", features = ["dialog", "system-tray"] }
 # One app instance at a time (a second launch focuses the first and exits).
 tauri-plugin-single-instance = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "v1" }
 
 # --- Async runtime ---
-tokio = { version = "1.37", features = ["full"] }
+# Only what the app uses ("full" also pulls signal handling, stdio, parking_lot).
+tokio = { version = "1.37", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "fs",
+    "io-util",
+    "net",
+    "process",
+] }
 
 # --- HTTP ---
 # No gzip/brotli: Range offsets must refer to raw file bytes, so downloads
 # always request `Accept-Encoding: identity` (see `apply_headers`).
-reqwest = { version = "0.12", default-features = false, features = [
-    "stream",
-    "rustls-tls",
-] }
+# TLS: on Windows (the shipping target) use the OS's own TLS (schannel) and
+# certificate store — no bundled TLS stack or root list in the exe. Elsewhere
+# rustls, so no OpenSSL is needed to build.
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
 
 # --- Streaming helpers ---
 futures-util = "0.3"
@@ -41,7 +51,6 @@ serde_json = "1.0"
 # --- Utility ---
 anyhow = "1.0"
 uuid = { version = "1.8", features = ["v4"] }
-num_cpus = "1.16"
 async-trait = "0.1"
 
 # --- Integrity hashing ---
@@ -53,13 +62,29 @@ axum = { version = "0.7", default-features = false, features = ["tokio", "http1"
 # OS CSPRNG for the bridge token.
 getrandom = "0.2"
 
+# --- Component manager: unpack the pinned FFmpeg zip (deflate only) ---
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
 # --- Structured logging ---
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# No `env-filter`: it drags in regex (~220 KB). One global level is enough.
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "fmt",
+    "std",
+    "registry",
+] }
+
+[target.'cfg(windows)'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
+
+[target.'cfg(not(windows))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [dev-dependencies]
 # Local HTTP fixture server for deterministic engine tests.
 axum = "0.7"
+# A test captures logs with a per-target filter.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
 # This feature is used for production builds or when a dev server is not specified,

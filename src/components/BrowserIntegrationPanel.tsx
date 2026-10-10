@@ -12,6 +12,7 @@ interface Props {
 export function BrowserIntegrationPanel({ info, flash }: Props) {
   const [open, setOpen] = useState(false);
   const [showToken, setShowToken] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
   // null = not editing: show the backend's list.
   const [idsDraft, setIdsDraft] = useState<string | null>(null);
 
@@ -83,6 +84,14 @@ export function BrowserIntegrationPanel({ info, flash }: Props) {
             <span>
               Port: <b>{info.port ?? "—"}</b>
             </span>
+            <span>To connect the browser, click “Connect to IDM Replica” in the extension.</span>
+          </div>
+          <button className="linklike" onClick={() => setAdvanced(!advanced)}>
+            {advanced ? "▾ Advanced" : "▸ Advanced (manual token, extension IDs)"}
+          </button>
+          {advanced && (
+          <>
+          <div className="bridge-row">
             <button onClick={copyToken} disabled={!info.token}>
               Copy token
             </button>
@@ -109,8 +118,9 @@ export function BrowserIntegrationPanel({ info, flash }: Props) {
 
           <label className="dir-wrap">
             <span>
-              Allowed extension IDs — one per line (from chrome://extensions). Empty = refuse all
-              browser requests (curl without an Origin still works with the token).
+              Extra allowed extension IDs — one per line. The official extension
+              {info.shippedExtensionIds.length > 0 ? ` (${info.shippedExtensionIds.join(", ")})` : ""} is
+              always allowed; add an ID here only for a custom build.
             </span>
             <textarea
               className="dir-input area"
@@ -136,6 +146,8 @@ export function BrowserIntegrationPanel({ info, flash }: Props) {
                 Discard
               </button>
             </div>
+          )}
+          </>
           )}
 
           <div className={`status-text ${info.error ? "error-line" : ""}`}>

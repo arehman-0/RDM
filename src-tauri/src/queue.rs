@@ -144,6 +144,11 @@ impl QueueManager {
         self.running.load(Ordering::Acquire)
     }
 
+    /// Ids of every waiting entry (tray "Pause all" / "Resume all").
+    pub fn pending_ids(&self) -> Vec<String> {
+        self.pending().iter().map(|e| e.id.clone()).collect()
+    }
+
     #[cfg(test)]
     pub fn is_pending(&self, id: &str) -> bool {
         self.pending().iter().any(|e| e.id == id)

@@ -20,19 +20,26 @@
   <h1>IDM Replica — Options</h1>
   <p class="dim">Everything stays on this computer: the extension only talks to IDM Replica at 127.0.0.1.</p>
 
-  <h2>1. Pair with the app</h2>
-  <p>In IDM Replica → <b>Browser integration</b> → Allowed extension IDs, paste this ID:<br /><code id="extid"></code>
-    <button id="copyid">Copy ID</button></p>
-  <label>Token (IDM Replica → Browser integration → Copy token)
-    <div class="row">
-      <input type="password" id="token" autocomplete="off" spellcheck="false" placeholder="64-character token" />
-      <button id="showtoken">Show</button>
-    </div>
-  </label>
-  <label>Bridge port (default 38917)
-    <input type="number" id="port" min="1" max="65535" />
-  </label>
-  <div class="row"><button id="test">Test connection</button></div>
+  <h2>1. Connect to the app</h2>
+  <p>Start IDM Replica, click <b>Connect</b>, then click <b>Allow</b> in the app. That's all.</p>
+  <div class="row">
+    <button id="connect" class="primary">Connect to IDM Replica</button>
+    <button id="test">Test connection</button>
+  </div>
+  <details style="margin-top:12px">
+    <summary>Advanced (manual token, port, extension ID)</summary>
+    <p>Extension ID (only needed in the app for a custom build): <code id="extid"></code>
+      <button id="copyid">Copy ID</button></p>
+    <label>Token (IDM Replica → Browser integration → Advanced → Copy token)
+      <div class="row">
+        <input type="password" id="token" autocomplete="off" spellcheck="false" placeholder="64-character token" />
+        <button id="showtoken">Show</button>
+      </div>
+    </label>
+    <label>Bridge port (default 38917)
+      <input type="number" id="port" min="1" max="65535" />
+    </label>
+  </details>
   <div class="status" style="margin-top:8px"><span class="dot" id="dot"></span><span id="conn">Not tested yet.</span></div>
 
   <h2>2. Floating button</h2>

@@ -17,6 +17,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::components::{self, Tool};
 use crate::process;
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
@@ -226,7 +227,7 @@ pub struct YtDlpExtractor {
 impl Default for YtDlpExtractor {
     fn default() -> Self {
         Self {
-            program: "yt-dlp".into(),
+            program: components::tool_program(Tool::YtDlp),
         }
     }
 }
@@ -270,8 +271,19 @@ pub enum MissingTool {
 
 /// Like [`preflight`], but says which tool is missing first (yt-dlp wins).
 pub async fn preflight_check() -> std::result::Result<(), (MissingTool, String)> {
-    let have_ytdlp = binary_ok("yt-dlp", &["--version"]).await;
-    let have_ffmpeg = binary_ok("ffmpeg", &["-version"]).await;
+    // With the component manager: is each tool resolvable (components dir,
+    // bundled, PATH)? Without one (unit tests): can it be run from PATH?
+    let (have_ytdlp, have_ffmpeg) = if components::global().is_some() {
+        (
+            components::has_tool(Tool::YtDlp),
+            components::has_tool(Tool::Ffmpeg),
+        )
+    } else {
+        (
+            binary_ok("yt-dlp", &["--version"]).await,
+            binary_ok("ffmpeg", &["-version"]).await,
+        )
+    };
     let first = if !have_ytdlp {
         MissingTool::YtDlp
     } else if !have_ffmpeg {
@@ -292,8 +304,8 @@ fn missing_message(have_ytdlp: bool, have_ffmpeg: bool) -> String {
     }
 
     let hint = if cfg!(windows) {
-        "Install with: winget install yt-dlp.yt-dlp  and  winget install Gyan.FFmpeg \
-         (then reopen the app so PATH refreshes)."
+        "Open IDM Replica and let it finish \"Setting up components\" \
+         (Video components → Install); nothing has to be installed by hand."
     } else if cfg!(target_os = "macos") {
         "Install with: brew install yt-dlp ffmpeg."
     } else {
@@ -330,6 +342,8 @@ async fn run_yt_dlp(
 ) -> Result<String> {
     let mut cmd = process::command(program);
     cmd.args(["--no-warnings", "--no-playlist", "-J", "-f", YT_DLP_FORMAT]);
+    // Our own JS runtime / ffmpeg, so nothing has to be on PATH.
+    cmd.args(components::yt_dlp_args());
     for (k, v) in headers {
         cmd.arg("--add-header")
             .arg(format!("{}:{}", k.trim(), v.trim()));

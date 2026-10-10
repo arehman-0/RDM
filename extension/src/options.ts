@@ -1,6 +1,7 @@
 // Options page: pairing (token, port), floating button, interception.
 
-import type { ConnReply } from "./lib/protocol";
+import { MSG } from "./lib/messages";
+import type { ConnReply, PairReply } from "./lib/protocol";
 import { DEFAULT_PORT, normalizeSettings, parseExtList, type Settings } from "./lib/settings";
 import { $, ask, paintConn } from "./ui";
 
@@ -86,6 +87,22 @@ $("showtoken").addEventListener("click", () => {
   const hidden = token.type === "password";
   token.type = hidden ? "text" : "password";
   $("showtoken").textContent = hidden ? "Hide" : "Show";
+});
+$("connect").addEventListener("click", async () => {
+  // Save first (the port may have been edited), pair, then reload the token field.
+  if (!(await save())) return;
+  const btn = $<HTMLButtonElement>("connect");
+  btn.disabled = true;
+  $("conn").textContent = MSG.pairWaiting;
+  const r = await ask<PairReply>({ type: "pair" });
+  btn.disabled = false;
+  if (r?.ok) {
+    await load();
+    say(MSG.paired, true);
+  } else {
+    say(r?.error ?? "No answer from the extension.", false);
+  }
+  paintConn($("dot"), $("conn"), await ask<ConnReply>({ type: "check-connection" }));
 });
 $("save").addEventListener("click", () => void save());
 $("test").addEventListener("click", () => void test());

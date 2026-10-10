@@ -17,6 +17,10 @@
     .empty { color: var(--dim); padding: 10px 0; text-align: center; }
     .paste { display: flex; gap: 6px; }
     .paste input { flex: 1; min-width: 0; }
+    .cta { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--accent);
+      border-radius: 8px; background: var(--panel); }
+    .cta[hidden] { display: none; }
+    .cta b { font-size: 14px; }
   </style>
 </head>
 <body>
@@ -25,6 +29,11 @@
     <a href="#" id="options">Options</a>
   </header>
   <div class="status"><span class="dot" id="dot"></span><span id="conn">Checking the app…</span></div>
+  <div class="cta" id="cta" hidden>
+    <b id="cta-title"></b>
+    <span class="dim" id="cta-text"></span>
+    <button id="cta-btn" class="primary"></button>
+  </div>
   <div class="list" id="list"></div>
   <button id="all" class="primary" hidden>Download all</button>
   <div class="paste">

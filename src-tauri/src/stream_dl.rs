@@ -176,6 +176,8 @@ pub struct StreamJob<'a> {
     /// Private scratch dir for fragments (removed afterwards).
     pub temp_dir: &'a Path,
     pub quality: Quality,
+    /// Extra yt-dlp options (our JS runtime and ffmpeg locations).
+    pub extra_args: &'a [String],
 }
 
 /// The yt-dlp argument list (separate for testing).
@@ -207,6 +209,7 @@ pub fn build_args(job: &StreamJob<'_>) -> Vec<String> {
     a.push(format!("temp:{}", job.temp_dir.to_string_lossy()));
     a.push("-o".into());
     a.push("%(title).120B.%(ext)s".into());
+    a.extend(job.extra_args.iter().cloned());
     for (k, v) in job.headers {
         a.push("--add-header".into());
         a.push(format!("{}:{}", k.trim(), v.trim()));
@@ -399,12 +402,17 @@ mod tests {
             dir: &dir,
             temp_dir: &tmp,
             quality: Quality::MaxHeight(720),
+            extra_args: &[
+                "--js-runtimes".to_string(),
+                "quickjs:C:/c/qjs.exe".to_string(),
+            ],
         });
         let joined = a.join("\n");
         assert!(joined.contains("--add-header\nReferer:https://site.example/page"));
         assert!(joined.contains("--add-header\nCookie:sid=1"));
         assert!(joined.contains("-f\nbv*[height<=720]"));
         assert!(joined.contains("-P\ntemp:tmp"));
+        assert!(joined.contains("--js-runtimes\nquickjs:C:/c/qjs.exe"));
         // The URL comes last, after `--`.
         assert_eq!(&a[a.len() - 2..], ["--", "-https://x.example/master.m3u8"]);
     }
@@ -418,6 +426,7 @@ mod tests {
             dir,
             temp_dir: tmp,
             quality: Quality::Best,
+            extra_args: &[],
         }
     }
 

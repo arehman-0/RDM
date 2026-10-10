@@ -183,6 +183,12 @@ curl -s -H "X-IDM-Token: $TOKEN" -H "Content-Type: application/json" -d '{"url":
 Endpoints:
 - `GET /v1/ping` → `{app, version, bridge:1}`. No token needed.
 - `GET /v1/auth` → `204` if the token is right. It has no side effects.
+- `POST /v1/pair` → one-click pairing, no token needed. It only works from an allowed
+  extension Origin; the ID is taken from the `Origin` header, never from the body. The
+  app shows *"Allow <browser> extension to send downloads to IDM Replica?"*.
+  **Allow** → `{ok:true, token}`. **Deny**, or no answer within 2 minutes →
+  `pairing_denied`. Only one prompt at a time (`pairing_pending`), and at most 3
+  attempts per minute (`pairing_rate_limited`).
 - `POST /v1/download` takes `{url?, pageUrl?, referer?, userAgent?, cookies?, headers?, fileName?, kind?: "auto"|"file"|"stream", mediaType?, size?, quality?, source?}`.
   It returns `{ok:true, id, fileName, queued, status: "queued"|"pending-confirm", duplicate}`.
 - `POST /v1/batch {items:[…]}` → `{ok, results:[…]}`. Validation is all-or-nothing, and each item gets its own result.
@@ -228,13 +234,59 @@ Error codes (every error is `{ok:false, code, message}`, plus `error` with the s
 | `app_busy` | 429 | too many requests waiting for confirmation |
 | `ytdlp_missing` / `ffmpeg_missing` | 503 | the stream path needs a tool that isn't installed |
 | `drm_protected` | — | reported on the job (its error text), not in the HTTP response: DRM is found only while yt-dlp runs |
+| `pairing_denied` | 403 | the user clicked Deny on the pairing prompt, or didn't answer |
+| `pairing_pending` | 409 | a pairing prompt is already on screen |
+| `pairing_rate_limited` | 429 | more than 3 pairing attempts in a minute |
 | `not_found` | 404 | unknown endpoint |
 | `internal` | 500 | anything else |
+
+The extension IDs in `bridge::shipped_extension_ids()` are always allowed: the development
+build's fixed ID, plus `WEB_STORE_EXTENSION_ID` (a placeholder until the extension is
+published). The settings field only adds IDs for custom builds.
 
 Only one copy of the app runs at a time. A second launch focuses the existing window,
 hands over any `http(s)` URL it was given (as a confirm card), and exits. As a second
 safeguard, an OS file lock on `app.lock` in the data dir is taken before any file is
 opened. The OS releases it on a crash, so a stale lock never blocks startup.
+
+## Components (yt-dlp, QuickJS, FFmpeg)
+
+Video downloads need three external tools. Nothing has to be installed by hand:
+
+- **One resolver** (`components.rs`) finds each tool in this order: the per-user folder
+  `%LOCALAPPDATA%\com.idmreplica.app\components\`, then a copy bundled next to the exe,
+  then `PATH`. `youtube.rs`, `muxer.rs`, `stream_dl.rs` and the prerequisite check all
+  use it. Every spawn uses `CREATE_NO_WINDOW`.
+- **Pinned manifest**: `src-tauri/components.json` (embedded at build time) is the only
+  place with versions, URLs and SHA-256 hashes.
+- **First run**: if a tool is missing everywhere, the *Setting up components* screen
+  downloads it (resumable), verifies the SHA-256, and only then moves it into place.
+  A wrong file is deleted. Retry continues an interrupted download.
+- **yt-dlp needs a JavaScript runtime for YouTube** (per its current docs). The app
+  installs QuickJS-NG (2 MB) and passes `--js-runtimes quickjs:<path>` and
+  `--ffmpeg-location <dir>` on every yt-dlp call.
+- **yt-dlp updates**: checked at most once a day (and after a failed extraction, at most
+  every 10 minutes). The new exe must match the release's `SHA2-256SUMS` and pass
+  `--version`; otherwise the previous one is restored. Toggle: *Keep yt-dlp up to date*.
+
+Commands: `get_components_status()`, `install_components()`, `ytdlp_version()`,
+`check_ytdlp_update()`, `set_ytdlp_auto_update({ enabled })`.
+Events: `components-status` → `ComponentsInfo`, `component-progress` →
+`{ id, name, phase, downloaded, total, error }`.
+
+## Tray and startup
+
+- Closing the window hides the app to the system tray, so browser take-over keeps
+  working. A one-time message explains this. Tray menu: Open, Pause all, Resume all, Quit.
+- **Quit** pauses every engine job, waits for the resume sidecars to be written, kills
+  yt-dlp processes, saves the history, then exits.
+- *Start with Windows* (default off) adds a per-user value under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` and removes it when turned off.
+  *Start minimized to the tray* applies to that login start.
+
+Commands: `get_app_settings()`, `set_app_settings({ settings: { startWithWindows,
+startMinimized } })`, `get_pending_pairing()`, `answer_pairing({ id, allow })`.
+Events: `pairing-request` → `{ id, extensionId, browser }`, `pairing-closed` → `{ id }`.
 
 ## Persistence
 
