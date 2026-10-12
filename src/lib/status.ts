@@ -73,7 +73,3 @@ export function cardActions(card: DownloadCard): CardAction[] {
 export function missingHeaders(card: DownloadCard): boolean {
   return (card.headerNames?.length ?? 0) > 0 && card.status === "interrupted";
 }
-
-export function isTerminal(status: string): boolean {
-  return ["complete", "error", "canceled", "interrupted"].includes(status);
-}

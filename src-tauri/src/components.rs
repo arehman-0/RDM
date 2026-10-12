@@ -272,6 +272,34 @@ pub fn resolve(spec: &ComponentSpec, loc: &Locations) -> Option<Resolved> {
         })
 }
 
+/// A JavaScript runtime yt-dlp can run (it needs one for YouTube).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JsRuntime {
+    /// Our own QuickJS-NG (components dir, bundled, or PATH).
+    QuickJs(PathBuf),
+    /// `deno` on PATH.
+    Deno,
+    /// `node` on PATH.
+    Node,
+}
+
+/// Pick the runtime: our QuickJS first, then `deno`, then `node` from `path`.
+pub fn find_js_runtime(qjs: Option<PathBuf>, path: &[PathBuf]) -> Option<JsRuntime> {
+    let on_path = |exe: &str| {
+        let name = os_exe_name(exe);
+        path.iter().any(|d| d.join(&name).is_file())
+    };
+    if let Some(qjs) = qjs {
+        Some(JsRuntime::QuickJs(qjs))
+    } else if on_path("deno.exe") {
+        Some(JsRuntime::Deno)
+    } else if on_path("node.exe") {
+        Some(JsRuntime::Node)
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Errors, events, persisted state
 // ---------------------------------------------------------------------------
@@ -439,6 +467,11 @@ impl Components {
         self.manifest
             .get(tool.id())
             .and_then(|spec| resolve(spec, &self.loc))
+    }
+
+    /// The JavaScript runtime yt-dlp will use, if there is one.
+    pub fn js_runtime(&self) -> Option<JsRuntime> {
+        find_js_runtime(self.resolve(Tool::Qjs).map(|r| r.path), &self.loc.path)
     }
 
     pub fn status(&self) -> Vec<ComponentStatus> {
@@ -789,9 +822,18 @@ impl Components {
     /// whatever is (or isn't) on PATH.
     pub fn yt_dlp_args(&self) -> Vec<String> {
         let mut args = Vec::new();
-        if let Some(qjs) = self.resolve(Tool::Qjs) {
-            args.push("--js-runtimes".into());
-            args.push(format!("quickjs:{}", qjs.path.display()));
+        match self.js_runtime() {
+            Some(JsRuntime::QuickJs(qjs)) => {
+                args.push("--js-runtimes".into());
+                args.push(format!("quickjs:{}", qjs.display()));
+            }
+            // Not enabled by default in yt-dlp, so it has to be named.
+            Some(JsRuntime::Node) => {
+                args.push("--js-runtimes".into());
+                args.push("node".into());
+            }
+            // yt-dlp looks for deno on PATH by itself.
+            Some(JsRuntime::Deno) | None => {}
         }
         if let Some(dir) = self
             .resolve(Tool::Ffmpeg)
@@ -952,6 +994,11 @@ pub fn yt_dlp_args() -> Vec<String> {
 /// Is `tool` available from any location?
 pub fn has_tool(tool: Tool) -> bool {
     global().is_some_and(|c| c.resolve(tool).is_some())
+}
+
+/// Is there a JavaScript runtime for yt-dlp (QuickJS, or deno/node on PATH)?
+pub fn has_js_runtime() -> bool {
+    global().is_some_and(|c| c.js_runtime().is_some())
 }
 
 #[cfg(test)]
@@ -1167,6 +1214,61 @@ mod tests {
                 path: on_path,
                 source: Source::Path
             }
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn js_runtime_prefers_quickjs_then_deno_then_node() {
+        let root = temp_dir("comp_js");
+        let path = vec![root.join("a"), root.join("b")];
+        for d in &path {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        assert_eq!(find_js_runtime(None, &path), None);
+        assert_eq!(find_js_runtime(None, &[]), None);
+
+        std::fs::write(path[1].join(os_exe_name("node.exe")), b"x").unwrap();
+        assert_eq!(find_js_runtime(None, &path), Some(JsRuntime::Node));
+        std::fs::write(path[0].join(os_exe_name("deno.exe")), b"x").unwrap();
+        assert_eq!(find_js_runtime(None, &path), Some(JsRuntime::Deno));
+        let qjs = root.join("qjs.exe");
+        assert_eq!(
+            find_js_runtime(Some(qjs.clone()), &path),
+            Some(JsRuntime::QuickJs(qjs))
+        );
+        // A directory with the right name is not a runtime.
+        let dirs = vec![root.join("c")];
+        std::fs::create_dir_all(dirs[0].join(os_exe_name("deno.exe"))).unwrap();
+        assert_eq!(find_js_runtime(None, &dirs), None);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn yt_dlp_args_name_the_js_runtime() {
+        let root = temp_dir("comp_js_args");
+        let c = manager(Manifest::embedded(), &root);
+        assert_eq!(c.js_runtime(), None);
+        assert!(c.yt_dlp_args().is_empty());
+
+        // node has to be asked for; deno is yt-dlp's default.
+        let path = root.join("path");
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join(os_exe_name("node.exe")), b"x").unwrap();
+        assert_eq!(c.yt_dlp_args(), ["--js-runtimes", "node"]);
+        std::fs::write(path.join(os_exe_name("deno.exe")), b"x").unwrap();
+        assert!(c.yt_dlp_args().is_empty());
+
+        // Our own QuickJS wins and is passed by full path.
+        let qjs = root.join("components").join("qjs").join("qjs.exe");
+        std::fs::create_dir_all(qjs.parent().unwrap()).unwrap();
+        std::fs::write(&qjs, b"x").unwrap();
+        assert_eq!(
+            c.yt_dlp_args(),
+            [
+                "--js-runtimes".to_string(),
+                format!("quickjs:{}", qjs.display())
+            ]
         );
         let _ = std::fs::remove_dir_all(root);
     }

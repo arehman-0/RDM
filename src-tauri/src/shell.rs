@@ -237,43 +237,70 @@ pub fn show_main(app: &AppHandle) {
 pub fn on_tray_event(app: &AppHandle, event: SystemTrayEvent) {
     match event {
         SystemTrayEvent::LeftClick { .. } | SystemTrayEvent::DoubleClick { .. } => show_main(app),
-        SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-            "open" => show_main(app),
-            "pause_all" | "resume_all" => {
-                let (app, pause) = (app.clone(), id == "pause_all");
-                tauri::async_runtime::spawn(async move { pause_all(&app, pause).await });
-            }
-            "quit" => {
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move { quit(app).await });
-            }
-            _ => {}
-        },
+        SystemTrayEvent::MenuItemClick { id, .. } => menu_action(app, &id),
         _ => {}
     }
 }
 
+/// What a tray menu item does (by its id).
+pub fn menu_action(app: &AppHandle, id: &str) {
+    match id {
+        "open" => show_main(app),
+        "pause_all" | "resume_all" => {
+            let (app, pause) = (app.clone(), id == "pause_all");
+            tauri::async_runtime::spawn(async move { pause_all(&app, pause).await });
+        }
+        "quit" => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move { quit(app).await });
+        }
+        _ => {}
+    }
+}
+
+/// Set in the app's environment to let a second launch trigger a tray menu
+/// item (`--test-tray=<id>`). Only for automated tests of the tray actions:
+/// the Windows 11 notification area can't be driven by UI automation.
+pub const TEST_HOOKS_ENV: &str = "IDM_REPLICA_TEST_HOOKS";
+
+/// The tray menu id a second launch asked for, if test hooks are on.
+pub fn test_tray_action(hooks_enabled: bool, argv: &[String]) -> Option<&str> {
+    if !hooks_enabled {
+        return None;
+    }
+    argv.iter()
+        .skip(1)
+        .find_map(|a| a.strip_prefix("--test-tray="))
+}
+
 /// The window's X: keep running in the tray (browser take-over only works
-/// while the app runs). The first time, say so.
+/// while the app runs). The first time, say so — in a dialog owned by the
+/// still-visible window, so it is on top; the window hides on OK. (A dialog
+/// without an owner, opened after hiding, comes up behind other windows.)
 pub fn hide_to_tray(window: &Window) {
-    let _ = window.hide();
     let app = window.app_handle();
     let shell = app.state::<ShellState>();
     let first_time = {
         let mut s = lock(&shell.settings);
         !std::mem::replace(&mut s.tray_notice_shown, true)
     };
-    if first_time {
-        let snapshot = lock(&shell.settings).clone();
-        let _ = snapshot.save(&shell.settings_path);
-        tauri::api::dialog::message(
-            None::<&Window>,
-            "IDM Replica is still running",
-            "IDM Replica keeps running in the system tray so it can take over downloads \
-             from your browser.\n\nUse the tray icon to open it again, or choose Quit there \
-             to close it completely.",
-        );
+    if !first_time {
+        let _ = window.hide();
+        return;
     }
+    let snapshot = lock(&shell.settings).clone();
+    let _ = snapshot.save(&shell.settings_path);
+    let hide = window.clone();
+    tauri::api::dialog::MessageDialogBuilder::new(
+        "IDM Replica is still running",
+        "IDM Replica keeps running in the system tray so it can take over downloads \
+         from your browser.\n\nUse the tray icon to open it again, or choose Quit there \
+         to close it completely.",
+    )
+    .parent(window)
+    .show(move |_| {
+        let _ = hide.hide();
+    });
 }
 
 /// Tray "Pause all" / "Resume all": running engine jobs and waiting entries.
@@ -321,4 +348,26 @@ pub async fn quit(app: AppHandle) {
     }
     tracing::info!("quit from the tray");
     app.exit(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_tray_action;
+
+    #[test]
+    fn tray_test_hook_needs_the_env_switch() {
+        let argv: Vec<String> = ["app.exe", "https://x.example/a", "--test-tray=pause_all"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(test_tray_action(true, &argv), Some("pause_all"));
+        // Off by default: the argument is ignored.
+        assert_eq!(test_tray_action(false, &argv), None);
+        assert_eq!(test_tray_action(true, &argv[..2]), None);
+        // argv[0] is the program, never an action.
+        assert_eq!(
+            test_tray_action(true, &["--test-tray=quit".to_string()]),
+            None
+        );
+    }
 }

@@ -14,7 +14,9 @@ stateDiagram-v2
     Downloading --> Canceled: cancel_download
     Queued --> Canceled: cancel_download (cancel_pending)
 
-    state "App closed or killed" as Closed
+    %% Closing the window only hides it (tray); the app keeps downloading.
+    %% Tray Quit (shell::quit): pause jobs -> wait ~0.9 s for sidecars -> flush history -> exit.
+    state "App quit from the tray, or killed" as Closed
     Downloading --> Closed
     Paused --> Closed
     Muxing --> Closed

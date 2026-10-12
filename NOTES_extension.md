@@ -1,4 +1,15 @@
-# Bridge / app changes for the extension — status (updated 2026-10-09)
+# Bridge / app changes for the extension — status (updated 2026-10-12)
+
+## Resolved 2026-10-12
+- **New error code `js_runtime_missing`** (503). The preflight for a video page now checks
+  yt-dlp → JavaScript runtime → ffmpeg and reports the first one missing. A runtime is
+  QuickJS from the component manager, else `deno` on `PATH`, else `node` on `PATH`
+  (yt-dlp is then run with `--js-runtimes node`). Manifest (`.m3u8` / `.mpd`) jobs skip
+  the runtime check. The extension shows `MSG.jsRuntimeMissing`.
+- **One-click pairing** (`POST /v1/pair`) and the pre-allowed extension ID are in; see the
+  README. The app is brought to the front for the Allow / Deny prompt.
+- **Tray notice**: it used to open behind other windows. It is now owned by the app
+  window and the window hides on OK.
 
 ## Resolved this session
 1. **Single instance**: `tauri-plugin-single-instance` (v1 branch) plus an OS file lock on
@@ -50,3 +61,62 @@
 - **Pause for manifest jobs**: a yt-dlp stream can be cancelled but not paused.
   - Proposal: pause = kill, resume = rerun yt-dlp (it continues `.part` files) with the
     same temp dir.
+- **Custom FFmpeg build** (written up 2026-10-12; nothing was built or measured). Today the
+  app installs BtbN's LGPL *shared* build: 77 MB download, 156 MB on disk. The app only
+  ever stream-copies, so almost all of that is unused.
+
+  What is actually used:
+  - *By the app* (`muxer.rs`): `ffmpeg -version`, then
+    `ffmpeg -y -hide_banner -loglevel error -i <video> -i <audio> -c:v copy -c:a copy
+    -map 0:v:0 -map 1:a:0 -movflags +faststart <out>.mp4`. The inputs are local files that
+    yt-dlp reported as `mp4`/`m4a` (preferred by our format selector) or `webm`.
+  - *By yt-dlp* (`stream_dl.rs`, format `bv*+ba/b`, found through `--ffmpeg-location`):
+    the merger (`-c copy -map 0:v:0 -map 1:a:0`, output mp4, or mkv/webm when the codecs
+    don't fit mp4), and the fix-ups after its own HLS/DASH download (MPEG-TS → mp4 with
+    `-bsf:a aac_adtstoasc`, DASH m4a → mp4, timestamp/duration fix, all `-c copy`). yt-dlp
+    downloads HLS/DASH segments itself; it only lets ffmpeg *download* for live streams and
+    a few HLS variants its native downloader refuses.
+  - *Not used anywhere*: decoding, encoding, filters, scaling, resampling, devices,
+    subtitles/thumbnail embedding, audio extraction (`-x`), `ffprobe`, `ffplay`.
+
+  | Kind | Needed |
+  |---|---|
+  | Protocols | `file`, `pipe` (mux only); plus `http`, `https`, `tcp`, `tls`, `crypto`, `data` for the ffmpeg-as-HLS-downloader fallback |
+  | Demuxers | `mov` (mp4/m4a/fMP4), `matroska` (mkv/webm), `mpegts`, `aac`, `mp3`, `ac3`, `eac3`, `flac`, `ogg`, `flv`, `concat`; plus `hls` for the fallback |
+  | Muxers | `mp4`, `mov`, `matroska`, `webm`, `mpegts` |
+  | Parsers | `h264`, `hevc`, `vp8`, `vp9`, `av1`, `aac`, `aac_latm`, `opus`, `vorbis`, `mpegaudio`, `ac3`, `flac` |
+  | Bitstream filters | `aac_adtstoasc`, `extract_extradata`, `h264_mp4toannexb`, `hevc_mp4toannexb`, `vp9_superframe`, `vp9_superframe_split`, `av1_frame_merge` |
+  | Decoders / encoders / filters | none (only the few no-op filters the `ffmpeg` tool itself selects) |
+
+  Configure line (MinGW-w64 cross build, static, LGPL v2.1+ — no `--enable-gpl`,
+  no `--enable-nonfree`):
+
+  ```
+  ./configure --target-os=mingw32 --arch=x86_64 --cross-prefix=x86_64-w64-mingw32- \
+    --enable-static --disable-shared --extra-ldflags=-static --enable-small \
+    --disable-everything --disable-autodetect --disable-doc --disable-debug \
+    --disable-ffplay --disable-ffprobe \
+    --disable-avdevice --disable-swscale --disable-swresample \
+    --enable-schannel \
+    --enable-protocol=file,pipe,http,https,tcp,tls,crypto,data \
+    --enable-demuxer=mov,matroska,mpegts,hls,aac,mp3,ac3,eac3,flac,ogg,flv,concat \
+    --enable-muxer=mp4,mov,matroska,webm,mpegts \
+    --enable-parser=h264,hevc,vp8,vp9,av1,aac,aac_latm,opus,vorbis,mpegaudio,ac3,flac \
+    --enable-bsf=aac_adtstoasc,extract_extradata,h264_mp4toannexb,hevc_mp4toannexb,vp9_superframe,vp9_superframe_split,av1_frame_merge
+  ```
+
+  - Mux-only variant: drop `--enable-schannel`, the network protocols and `hls`, and add
+    `--disable-network`. Then live HLS (and the few streams yt-dlp hands to ffmpeg) fail.
+  - Estimated size: **about 2–4 MB** for one static `ffmpeg.exe` (mux-only near the low
+    end), against 156 MB today. This is an estimate from comparable minimal remux builds;
+    it has not been built.
+  - To check when it is built: (1) the `ffmpeg` tool needs libavfilter, so it stays on —
+    confirm configure accepts the build without swscale/swresample on the pinned version;
+    (2) with no decoders, FFmpeg can warn that it cannot find codec parameters for some
+    MPEG-TS inputs — test an HLS (AAC in TS) fix-up, and add `--enable-decoder=aac,h264`
+    (about +1 MB) if it fails; (3) `--disable-autodetect` also drops zlib, which only
+    matters for compressed MP4 headers / Matroska tracks (rare).
+  - Cost: we own the build (a pinned source tag, a CI job, the SHA-256 in
+    `components.json`) and must publish the source + this configure line for the LGPL.
+  - **Decision needed:** (a) keep BtbN's build, (b) ship our own mux-only build, or
+    (c) ship our own build with the HLS fallback (the line above). Recommended: (c).

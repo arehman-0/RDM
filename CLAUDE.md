@@ -54,7 +54,16 @@ exists in this repo.
 | `src-tauri/src/main.rs` | Tauri commands, IPC bridge, YouTube orchestration, preflight. |
 | `src-tauri/src/youtube.rs` | Stream-site extraction (yt-dlp), behind the `Extractor` provider trait. |
 | `src-tauri/src/muxer.rs` | FFmpeg `-c copy` mux + temp cleanup. |
+| `src-tauri/src/stream_dl.rs` | HLS/DASH manifest jobs: one yt-dlp run, progress parsing, tree kill. |
+| `src-tauri/src/components.rs` | Component manager: find / install / update yt-dlp, QuickJS, FFmpeg; picks the JS runtime. Pins live in `src-tauri/components.json`. |
+| `src-tauri/src/bridge.rs` | Browser bridge: localhost HTTP API, token + Origin checks, pairing, error codes. |
+| `src-tauri/src/shell.rs` | Tauri glue: tray menu, hide-to-tray, Pause/Resume all, safe Quit, setup + settings commands. |
+| `src-tauri/src/app_settings.rs` | `settings.json` + the "Start with Windows" HKCU Run value. |
+| `src-tauri/src/queue.rs` / `history.rs` | Queue (cap, schedule, priority) / persisted download list + restore. |
 | `src/App.tsx` | Dashboard: commands + event listeners + per-thread bars. |
+| `extension/` | Chrome extension (MV3); `src/lib/messages.ts` maps bridge error codes to text. |
+| `scripts/bench-download.mjs` | 500 MB local throughput benchmark through the release exe + bridge. |
+| `scripts/gen-third-party-notices.mjs` | Regenerates `THIRD_PARTY_NOTICES.md`. |
 
 ## Build / Test / Run commands
 

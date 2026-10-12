@@ -33,7 +33,7 @@ sequenceDiagram
         B-->>X: 200 {ok, id, fileName, queued:true}
     end
     B->>A: start(id, job)
-    A->>A: enqueue_download (same path as start_download)<br/>History stores header NAMES only<br/>preflight → 503 ytdlp_missing / ffmpeg_missing
+    A->>A: enqueue_download (same path as start_download)<br/>History stores header NAMES only<br/>preflight → 503 ytdlp_missing / js_runtime_missing (video pages only) / ffmpeg_missing
     alt manifest (.m3u8/.mpd)
         A->>A: stream_dl: yt-dlp --add-header … -f quality, one job,<br/>temp dir removed, output must be inside the folder
     else page stream / file

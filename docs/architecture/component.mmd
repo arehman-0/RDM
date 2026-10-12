@@ -20,11 +20,16 @@ graph LR
         LOCK["instance_lock.rs + single-instance plugin<br/>one app per data dir"]
         SINK["ProgressSink trait<br/>(TauriSink impl)"]
         BRIDGE["bridge.rs<br/>axum on 127.0.0.1:38917(+10)<br/>BridgeHost trait (TauriBridgeHost impl)"]
+        COMP["components.rs<br/>resolver: components dir -> bundled -> PATH<br/>install / verify / yt-dlp update, JS runtime choice"]
+        SHELL["shell.rs<br/>tray menu, hide-to-tray, Pause/Resume all,<br/>safe Quit, setup + settings commands"]
+        SET["app_settings.rs<br/>settings.json + HKCU Run value"]
     end
 
     subgraph External["External processes / OS"]
         YTDLP["yt-dlp"]
+        QJS["QuickJS-NG (or deno / node on PATH)<br/>run by yt-dlp"]
         FFMPEG["ffmpeg"]
+        TRAY["system tray icon + menu<br/>Open / Pause all / Resume all / Quit"]
         DISK["disk (positioned writes)"]
         STATE["app data dir<br/>downloads.json"]
         NET["HTTP servers / CDN"]
@@ -51,7 +56,25 @@ graph LR
     LOGS -- "emit_all: log-line" --> APP
 
     %% Browser bridge
-    EXT -- "HTTP: GET /v1/ping, POST /v1/download, /v1/batch<br/>(X-IDM-Token)" --> BRIDGE
+    EXT -- "HTTP: GET /v1/ping, /v1/auth, POST /v1/download, /v1/batch<br/>(X-IDM-Token); POST /v1/pair (Origin + user's Allow)" --> BRIDGE
+    BRIDGE -- "pairing_requested -> emit_all: pairing-request / pairing-closed" --> BUI
+    BUI -- "invoke: get_pending_pairing / answer_pairing" --> SHELL
+
+    %% Shell: tray, setup, settings
+    TRAY -- "menu click / window close" --> SHELL
+    SHELL -- "pause / resume every job, hold / release the queue" --> Q
+    SHELL -- "Quit: pause jobs, wait for sidecars, flush history, exit" --> HIST
+    APP -- "invoke: get_components_status / install_components /<br/>ytdlp_version / check_ytdlp_update / set_ytdlp_auto_update" --> SHELL
+    APP -- "invoke: get_app_settings / set_app_settings" --> SHELL
+    SHELL -- "emit_all: components-status / component-progress" --> APP
+    SHELL --> COMP
+    SHELL --> SET
+    SET -- "settings.json; reg.exe (HKCU Run)" --> STATE
+    COMP -- "download + SHA-256 check (reqwest)" --> NET
+    YT -- "tool paths, --js-runtimes, --ffmpeg-location" --> COMP
+    SDL --> COMP
+    MUX --> COMP
+    YTDLP -- "runs" --> QJS
     BUI -- "invoke: get_bridge_info / set_bridge_settings / regenerate_token" --> MAIN
     BUI -- "invoke: list_bridge_requests / accept_bridge_request / dismiss_bridge_request" --> MAIN
     MAIN --> BRIDGE

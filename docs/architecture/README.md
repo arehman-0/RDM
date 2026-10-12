@@ -23,7 +23,7 @@ Running ↔ Throttled (token bucket), Running ↔ Retry (backoff), Running ↔ P
 and the terminal Done / Failed states. The hot path stays lock-free.
 
 ## 4. `youtube-pipeline.mmd` — Adaptive-stream pipeline
-Detect (provider trait) → preflight (binaries present?) → extract two direct
+Detect (provider trait) → preflight (yt-dlp, a JavaScript runtime, ffmpeg) → extract two direct
 URLs → download both in parallel (each fully segmented) → FFmpeg copy-mux →
 cleanup → single playable MP4.
 

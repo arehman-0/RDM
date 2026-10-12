@@ -344,15 +344,19 @@ async fn enqueue_download(ctx: &Ctx, d: NewDownload) -> Result<StartResult, Host
         })
         .unwrap_or_else(|| default_download_dir(&ctx.app));
 
-    // Stream sites need yt-dlp + ffmpeg; check now for immediate feedback.
+    // Stream sites need yt-dlp + ffmpeg, and a JavaScript runtime to extract
+    // a video page (not for a plain manifest); check now for immediate feedback.
     if is_stream {
-        youtube::preflight_check().await.map_err(|(tool, msg)| {
-            let code = match tool {
-                youtube::MissingTool::YtDlp => ErrorCode::YtdlpMissing,
-                youtube::MissingTool::Ffmpeg => ErrorCode::FfmpegMissing,
-            };
-            HostError::new(code, msg)
-        })?;
+        youtube::preflight_check(!d.manifest)
+            .await
+            .map_err(|(tool, msg)| {
+                let code = match tool {
+                    youtube::MissingTool::YtDlp => ErrorCode::YtdlpMissing,
+                    youtube::MissingTool::JsRuntime => ErrorCode::JsRuntimeMissing,
+                    youtube::MissingTool::Ffmpeg => ErrorCode::FfmpegMissing,
+                };
+                HostError::new(code, msg)
+            })?;
     }
 
     let name_hint = if is_stream {
@@ -1066,6 +1070,12 @@ fn dismiss_bridge_request(bridge: BridgeState<'_>, id: String) -> Result<(), Str
 /// Another launch was attempted: bring our window forward, and offer any
 /// http(s) URL it was given as a download (as an Accept/Dismiss card).
 fn on_second_launch(app: &AppHandle, argv: &[String]) {
+    let hooks = std::env::var_os(shell::TEST_HOOKS_ENV).is_some();
+    if let Some(id) = shell::test_tray_action(hooks, argv) {
+        tracing::info!(id, "test hook: tray menu action");
+        shell::menu_action(app, id);
+        return;
+    }
     tracing::info!("second launch: focusing the running window");
     shell::show_main(app);
     let urls: Vec<String> = argv

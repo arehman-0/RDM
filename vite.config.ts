@@ -14,6 +14,12 @@ export default defineConfig({
   build: {
     target: "esnext",
     outDir: "dist",
+    // Release bundle: minified, no source maps (both are Vite's defaults;
+    // pinned so a config change can't ship maps by accident).
+    minify: "esbuild",
+    sourcemap: false,
+    // WebView2 supports <link rel="modulepreload"> natively.
+    modulePreload: { polyfill: false },
   },
   // `npm test`: pure-logic unit tests (no DOM needed).
   test: {

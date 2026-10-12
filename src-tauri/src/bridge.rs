@@ -153,6 +153,8 @@ pub enum ErrorCode {
     AppBusy,
     /// 503: yt-dlp is not installed (stream downloads).
     YtdlpMissing,
+    /// 503: no JavaScript runtime for yt-dlp (QuickJS, deno or node).
+    JsRuntimeMissing,
     /// 503: ffmpeg is not installed (stream downloads).
     FfmpegMissing,
     /// The stream is DRM-protected. Reported on the job (its error text),
@@ -181,7 +183,9 @@ impl ErrorCode {
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::AppBusy => StatusCode::TOO_MANY_REQUESTS,
-            Self::YtdlpMissing | Self::FfmpegMissing => StatusCode::SERVICE_UNAVAILABLE,
+            Self::YtdlpMissing | Self::JsRuntimeMissing | Self::FfmpegMissing => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             Self::DrmProtected => StatusCode::UNPROCESSABLE_ENTITY,
             Self::PairingDenied => StatusCode::FORBIDDEN,
             Self::PairingPending => StatusCode::CONFLICT,
@@ -2511,6 +2515,10 @@ mod policy_tests {
         *lock(&host.fail) = Some(HostError::new(ErrorCode::FfmpegMissing, "install ffmpeg"));
         let (s, v) = send(&base, json!({ "url": "https://vimeo.com/123" }), false).await;
         assert_eq!((s, v["code"].clone()), (503, json!("ffmpeg_missing")));
+        *lock(&host.fail) = Some(HostError::new(ErrorCode::JsRuntimeMissing, "no runtime"));
+        let yt = json!({ "url": "https://www.youtube.com/watch?v=lmnopqrstuv" });
+        let (s, v) = send(&base, yt, false).await;
+        assert_eq!((s, v["code"].clone()), (503, json!("js_runtime_missing")));
     }
 
     #[tokio::test]

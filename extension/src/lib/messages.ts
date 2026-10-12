@@ -22,6 +22,8 @@ export const MSG = {
   nothingFound: "No video found on this page yet. Start playing it and try again.",
   tooMany: "IDM Replica is busy: too many downloads are waiting for confirmation. Accept or dismiss some first.",
   ytdlpMissing: "IDM Replica needs yt-dlp for this video. Install it (see the notice in the app) and try again.",
+  jsRuntimeMissing:
+    "IDM Replica needs its JavaScript component for this video. Open IDM Replica, let it finish setting up its video components, and try again.",
   ffmpegMissing: "IDM Replica needs ffmpeg for this video. Install it (see the notice in the app) and try again.",
   badRequest: "IDM Replica rejected the request as invalid.",
   sentPending: "Sent to IDM Replica — confirm it in the app.",
@@ -45,6 +47,8 @@ export function codeMessage(code: string, extensionId: string): string | null {
       return MSG.drm;
     case "ytdlp_missing":
       return MSG.ytdlpMissing;
+    case "js_runtime_missing":
+      return MSG.jsRuntimeMissing;
     case "ffmpeg_missing":
       return MSG.ffmpegMissing;
     case "app_busy":

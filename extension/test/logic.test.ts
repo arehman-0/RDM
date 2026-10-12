@@ -394,6 +394,7 @@ describe("bridge error codes → friendly messages", () => {
     expect(codeMessage("drm_protected", ID)).toBe(MSG.drm);
     expect(codeMessage("ytdlp_missing", ID)).toBe(MSG.ytdlpMissing);
     expect(codeMessage("ffmpeg_missing", ID)).toBe(MSG.ffmpegMissing);
+    expect(codeMessage("js_runtime_missing", ID)).toBe(MSG.jsRuntimeMissing);
     expect(codeMessage("app_busy", ID)).toBe(MSG.tooMany);
     expect(codeMessage("payload_too_large", ID)).toBe(MSG.badRequest);
     expect(codeMessage("something_new", ID)).toBeNull();

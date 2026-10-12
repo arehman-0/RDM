@@ -91,9 +91,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
 
+# opt-level "s": measured with scripts/bench-download.mjs (3000 MB local file,
+# 6 runs each, 2026-10-12) at the same throughput as 3 (~1050 MB/s) with a
+# 2 MB smaller exe; "z" was ~13% slower. panic = "unwind": a panic ends only
+# the task/thread it happened in instead of closing the whole app.
 [profile.release]
-opt-level = 3
+opt-level = "s"
 lto = true
 codegen-units = 1
-panic = "abort"
+panic = "unwind"
 strip = true
