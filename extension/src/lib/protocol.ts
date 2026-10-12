@@ -25,6 +25,7 @@ export type Request =
   | { type: "download-all"; tabId: number }
   | { type: "download-url"; url: string; pageUrl?: string | null }
   | { type: "check-connection" }
+  | { type: "pair" }
   | { type: "get-settings" }
   | { type: "disable-site"; host: string }
   | { type: "toast"; text: string };
@@ -39,6 +40,8 @@ export type SendReply = SendResult;
 export type AllReply = { results: SendResult[] };
 export type ConnReply = { conn: ConnState; text: string; extensionId: string; port: number };
 export type SettingsReply = { settings: Settings };
+/** Result of one-click pairing (the token itself stays in the background). */
+export type PairReply = { ok: true } | { ok: false; error: string; code?: string };
 
 export function isItemKind(v: string): v is ItemKind {
   return ["video", "audio", "hls", "dash", "page"].includes(v);

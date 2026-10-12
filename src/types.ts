@@ -146,6 +146,8 @@ export interface BridgeInfo {
   error: string | null;
   token: string;
   defaultPort: number;
+  /** Extension IDs allowed out of the box (no setup needed). */
+  shippedExtensionIds: string[];
   protocol: number;
 }
 
@@ -169,4 +171,67 @@ export interface PendingRequest {
 /** `bridge-request-removed` */
 export interface BridgeRequestRemoved {
   id: string;
+}
+
+// --- Components (components.rs / shell.rs) --------------------------------
+
+/** One external tool (yt-dlp, QuickJS, FFmpeg). */
+export interface ComponentStatus {
+  id: string;
+  name: string;
+  pinnedVersion: string;
+  installedVersion: string | null;
+  /** Where it was found; null = missing everywhere. */
+  source: "components" | "bundled" | "path" | null;
+  size: number;
+  license: string;
+  purpose: string;
+}
+
+/** `get_components_status` result and `components-status` event. */
+export interface ComponentsInfo {
+  components: ComponentStatus[];
+  missing: string[];
+  missingBytes: number;
+  settingUp: boolean;
+  autoUpdate: boolean;
+  error: string | null;
+}
+
+/** `component-progress` event. */
+export interface ComponentProgress {
+  id: string;
+  name: string;
+  phase: "downloading" | "verifying" | "installing" | "done" | "error";
+  downloaded: number;
+  total: number;
+  error: string | null;
+}
+
+export type UpdateOutcome =
+  | { result: "upToDate"; version: string }
+  | { result: "updated"; from: string; to: string }
+  | { result: "rolledBack"; reason: string }
+  | { result: "skipped"; reason: string };
+
+/** `ytdlp_version` / `check_ytdlp_update` result. */
+export interface YtdlpInfo {
+  version: string | null;
+  outcome: UpdateOutcome | null;
+}
+
+// --- App settings + pairing ------------------------------------------------
+
+/** `get_app_settings` / `set_app_settings`. */
+export interface AppSettings {
+  startWithWindows: boolean;
+  startMinimized: boolean;
+  trayNoticeShown: boolean;
+}
+
+/** `pairing-request` event / `get_pending_pairing`. */
+export interface PairingPrompt {
+  id: string;
+  extensionId: string;
+  browser: string;
 }

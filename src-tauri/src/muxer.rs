@@ -27,7 +27,8 @@ async fn ffmpeg_available(program: &OsStr) -> bool {
 /// Run `ffmpeg -i video -i audio -c:v copy -c:a copy output` and, on success,
 /// delete the two temporary stream files.
 pub async fn mux(video: &Path, audio: &Path, output: &Path) -> Result<PathBuf> {
-    mux_with(OsStr::new("ffmpeg"), video, audio, output).await
+    let program = crate::components::tool_program(crate::components::Tool::Ffmpeg);
+    mux_with(&program, video, audio, output).await
 }
 
 /// [`mux`] with an explicit FFmpeg executable (tests pass a fake).

@@ -203,3 +203,51 @@ export async function sendBatch(
     toResult(typeof x === "object" && x !== null ? (x as Record<string, unknown>) : {}, 200, extensionId)
   );
 }
+
+export type PairResult = { ok: true; token: string } | { ok: false; error: string; code: string };
+
+/**
+ * One-click pairing: `POST /v1/pair` makes the app ask the user "Allow this
+ * extension?". The app identifies us by the request's Origin (we send no ID),
+ * and only answers with the token after Allow. Waits as long as the prompt.
+ */
+export async function pair(port: number, fetchFn: FetchFn, extensionId: string): Promise<PairResult> {
+  let resp: Response;
+  try {
+    resp = await fetchFn(`${base(port)}/v1/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(130_000),
+    });
+  } catch {
+    return { ok: false, error: MSG.notRunning, code: "app_unreachable" };
+  }
+  const body = await json(resp);
+  if (resp.ok && body.ok === true && typeof body.token === "string" && /^[0-9a-f]{64}$/i.test(body.token)) {
+    return { ok: true, token: body.token };
+  }
+  const code = str(body.code) || "internal";
+  return { ok: false, error: explainError(resp.status, str(body.message) || str(body.error), extensionId, code), code };
+}
+
+/** What the popup/options should offer for a connection state. */
+export type ConnAction = "none" | "start-app" | "connect" | "options";
+
+export function connAction(c: ConnState): ConnAction {
+  switch (c.state) {
+    case "connected":
+      return "none";
+    case "not-running":
+      return "start-app";
+    case "no-token":
+    case "token-invalid":
+      return "connect";
+    // Wrong port, something else on the port, or a custom build whose ID
+    // isn't allowed: these need the Options page.
+    case "port-mismatch":
+    case "wrong-app":
+    case "origin-blocked":
+      return "options";
+  }
+}

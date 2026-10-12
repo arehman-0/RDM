@@ -26,13 +26,16 @@ There is no remote code and no analytics.
 1. Start IDM Replica.
 2. Chrome → `chrome://extensions` → turn on **Developer mode** (top right) →
    **Load unpacked** → select `extension/dist`.
-3. Copy the extension ID `pcmcmknffhfehgpkoedecnabbphgnabg` (also shown in the
-   extension's Options). In IDM Replica → **Browser integration** → *Allowed extension
-   IDs*, paste it → **Save IDs**.
-4. In IDM Replica → Browser integration → **Copy token**. Open the extension's
-   **Options** (right-click the toolbar icon → Options), paste the token, then
-   **Test connection**. You should see *"Connected to IDM Replica 0.1.0 on port 38917"*.
-   If the app shows a different port, put that port in Options.
+3. Click the extension's toolbar icon → **Connect to IDM Replica**. The app comes to
+   the front and asks *"Allow Chrome extension?"* → click **Allow**. The popup then shows
+   *"Connected to IDM Replica … on port 38917"*. That's all: no ID or token to copy.
+
+The extension's ID ships pre-allowed in the app. Pairing calls `POST /v1/pair`; the app
+identifies the extension by the request's Origin and returns the token only after you
+click Allow. **Deny** returns nothing, and the popup says the connection was not allowed.
+
+Advanced (Options → Advanced): paste a token by hand (the app → Browser integration →
+Advanced → Copy token), change the port, or copy this extension's ID for a custom build.
 
 ## Using it
 
@@ -115,7 +118,10 @@ Deliberately **not** requested:
 |---|---|
 | "IDM Replica isn't running. Start IDM Replica and try again." | Start the app. If Chrome was asked to download, it already did so normally |
 | "IDM Replica doesn't allow this extension yet. Paste this ID …" | Add the ID in the app → Browser integration → Allowed extension IDs → Save IDs |
-| "Wrong token …" / "Not paired yet …" | Copy token in the app → paste in Options → Test connection. Regenerating the token in the app breaks the old one |
+| "Not connected yet …" / "The connection … is no longer valid" | Click **Connect to IDM Replica** and Allow in the app. Regenerating the token in the app breaks the old pairing |
+| "The connection was not allowed …" | Someone clicked Deny (or nobody answered within 2 minutes). Click Connect again |
+| "Too many connection attempts …" | The app allows 3 pairing prompts per minute. Wait a minute |
+| Popup says **Start IDM Replica** | The app isn't running (it can sit in the system tray). Start it, then *Try again* |
 | "IDM Replica is running on port X, but Options says Y" | Put X in Options. The app moves to 38918–38927 if 38917 is busy, e.g. when a second copy of the app is running |
 | "Something else is answering on port …" | Another program uses that port. Check the port shown in the app |
 | "This site uses protected video …" | DRM. Not downloadable by design (also reported on the app's card for DRM HLS streams) |

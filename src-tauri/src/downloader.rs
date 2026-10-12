@@ -451,6 +451,11 @@ impl DownloadManager {
     pub async fn get(&self, id: &str) -> Option<Arc<DownloadJob>> {
         self.jobs.lock().await.get(id).cloned()
     }
+
+    /// Every job that is currently registered (tray "Pause all", quit).
+    pub async fn all(&self) -> Vec<Arc<DownloadJob>> {
+        self.jobs.lock().await.values().cloned().collect()
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "id": "yt-dlp",
+      "name": "yt-dlp",
+      "version": "2026.08.19",
+      "exe": "yt-dlp.exe",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+      "sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a",
+      "size": 17840399,
+      "license": "GPL-3.0-or-later (the bundled exe); yt-dlp's own code: Unlicense",
+      "homepage": "https://github.com/yt-dlp/yt-dlp",
+      "purpose": "Resolves and downloads videos from YouTube and other sites, and HLS/DASH streams.",
+      "update": {
+        "sumsUrl": "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS",
+        "assetUrl": "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
+        "assetName": "yt-dlp.exe"
+      }
+    },
+    {
+      "id": "qjs",
+      "name": "QuickJS-NG",
+      "version": "0.17.0",
+      "exe": "qjs.exe",
+      "url": "https://github.com/quickjs-ng/quickjs/releases/download/v0.17.0/qjs-windows-x86_64.exe",
+      "sha256": "2aeabf0092c3262d6b2609824418f7dd7ed1f1df939f73b2b15645230cac0d77",
+      "size": 2151363,
+      "license": "MIT",
+      "homepage": "https://github.com/quickjs-ng/quickjs",
+      "purpose": "JavaScript runtime yt-dlp needs to extract YouTube videos."
+    },
+    {
+      "id": "ffmpeg",
+      "name": "FFmpeg",
+      "version": "n9.0.2-17-g2a571b6068 (LGPL, shared)",
+      "exe": "ffmpeg.exe",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-lgpl-shared-9.0.zip",
+      "sha256": "7157177b8a6cb2174c1650ba8c71b363f2c78cba5330f88c4c02cf5b2b880646",
+      "size": 76972461,
+      "license": "LGPL-3.0-or-later",
+      "homepage": "https://github.com/BtbN/FFmpeg-Builds",
+      "purpose": "Merges separate video and audio streams into one file (stream copy, no re-encoding).",
+      "archive": {
+        "dir": "bin",
+        "include": ["ffmpeg.exe", ".dll"]
+      }
+    }
+  ]
+}

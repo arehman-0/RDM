@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { checkConnection, explainError, sendBatch, sendDownload, type FetchFn } from "../src/lib/bridge";
+import { checkConnection, connAction, explainError, pair, sendBatch, sendDownload, type FetchFn } from "../src/lib/bridge";
 import { cleanName, fileNameFromDisposition, fileNameFromUrl, guessFileName, guessQuality } from "../src/lib/filename";
 import { bestItem, mergeItem, type MediaItem } from "../src/lib/items";
 import { classify, isAdOrTracker, normalizeUrl, toRecordable, totalSize } from "../src/lib/media";
@@ -394,6 +394,7 @@ describe("bridge error codes → friendly messages", () => {
     expect(codeMessage("drm_protected", ID)).toBe(MSG.drm);
     expect(codeMessage("ytdlp_missing", ID)).toBe(MSG.ytdlpMissing);
     expect(codeMessage("ffmpeg_missing", ID)).toBe(MSG.ffmpegMissing);
+    expect(codeMessage("js_runtime_missing", ID)).toBe(MSG.jsRuntimeMissing);
     expect(codeMessage("app_busy", ID)).toBe(MSG.tooMany);
     expect(codeMessage("payload_too_large", ID)).toBe(MSG.badRequest);
     expect(codeMessage("something_new", ID)).toBeNull();
@@ -484,5 +485,50 @@ describe("manifest", () => {
     const id = [...hex].map((h) => String.fromCharCode(97 + parseInt(h, 16))).join("");
     expect(id).toBe("pcmcmknffhfehgpkoedecnabbphgnabg");
     expect(m.permissions.sort()).toEqual(["contextMenus", "cookies", "downloads", "storage", "webRequest"]);
+  });
+});
+
+describe("one-click pairing (mocked fetch)", () => {
+  const ID = "pcmcmknffhfehgpkoedecnabbphgnabg";
+  const TOKEN = "ab".repeat(32);
+  const j = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+
+  it("sends no ID and no token, and returns the token only on Allow", async () => {
+    let seen: { url: string; init?: RequestInit } | undefined;
+    const allow: FetchFn = async (url, init) => {
+      seen = { url, init };
+      return j(200, { ok: true, token: TOKEN });
+    };
+    expect(await pair(38917, allow, ID)).toEqual({ ok: true, token: TOKEN });
+    expect(seen?.url).toBe("http://127.0.0.1:38917/v1/pair");
+    expect(seen?.init?.method).toBe("POST");
+    // The app takes our ID from the Origin header the browser adds; the body is empty.
+    expect(seen?.init?.body).toBe("{}");
+    expect(new Headers(seen?.init?.headers).has("X-IDM-Token")).toBe(false);
+  });
+  it("maps every refusal to a readable message and never invents a token", async () => {
+    const refused = (status: number, code: string): FetchFn => async () => j(status, { ok: false, code, message: "x" });
+    expect(await pair(38917, refused(403, "pairing_denied"), ID)).toEqual({ ok: false, error: MSG.pairDenied, code: "pairing_denied" });
+    expect(await pair(38917, refused(409, "pairing_pending"), ID)).toEqual({ ok: false, error: MSG.pairPending, code: "pairing_pending" });
+    expect(await pair(38917, refused(429, "pairing_rate_limited"), ID)).toEqual({ ok: false, error: MSG.pairRateLimited, code: "pairing_rate_limited" });
+    const blocked = await pair(38917, refused(403, "origin_not_allowed"), ID);
+    expect(blocked.ok).toBe(false);
+    expect(!blocked.ok && blocked.error).toContain(ID);
+    const down: FetchFn = async () => {
+      throw new TypeError("Failed to fetch");
+    };
+    expect(await pair(38917, down, ID)).toEqual({ ok: false, error: MSG.notRunning, code: "app_unreachable" });
+    // A malformed "success" (no / bad token) is not accepted.
+    const bogus = await pair(38917, async () => j(200, { ok: true, token: "short" }), ID);
+    expect(bogus.ok).toBe(false);
+  });
+  it("offers the right next step for each connection state", () => {
+    expect(connAction({ state: "connected", port: 1, version: "1" })).toBe("none");
+    expect(connAction({ state: "not-running" })).toBe("start-app");
+    expect(connAction({ state: "no-token", port: 1, version: "1" })).toBe("connect");
+    expect(connAction({ state: "token-invalid", port: 1, version: "1" })).toBe("connect");
+    expect(connAction({ state: "port-mismatch", foundPort: 2 })).toBe("options");
+    expect(connAction({ state: "origin-blocked" })).toBe("options");
+    expect(MSG.notRunning).toContain("Start IDM Replica");
   });
 });

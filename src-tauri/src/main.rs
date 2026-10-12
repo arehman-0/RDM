@@ -1,7 +1,9 @@
 // Prevents an extra console window on Windows in release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_settings;
 mod bridge;
+mod components;
 mod downloader;
 mod history;
 mod instance_lock;
@@ -10,6 +12,7 @@ mod muxer;
 mod opener;
 mod process;
 mod queue;
+mod shell;
 mod stream_dl;
 #[cfg(test)]
 mod testutil;
@@ -341,15 +344,19 @@ async fn enqueue_download(ctx: &Ctx, d: NewDownload) -> Result<StartResult, Host
         })
         .unwrap_or_else(|| default_download_dir(&ctx.app));
 
-    // Stream sites need yt-dlp + ffmpeg; check now for immediate feedback.
+    // Stream sites need yt-dlp + ffmpeg, and a JavaScript runtime to extract
+    // a video page (not for a plain manifest); check now for immediate feedback.
     if is_stream {
-        youtube::preflight_check().await.map_err(|(tool, msg)| {
-            let code = match tool {
-                youtube::MissingTool::YtDlp => ErrorCode::YtdlpMissing,
-                youtube::MissingTool::Ffmpeg => ErrorCode::FfmpegMissing,
-            };
-            HostError::new(code, msg)
-        })?;
+        youtube::preflight_check(!d.manifest)
+            .await
+            .map_err(|(tool, msg)| {
+                let code = match tool {
+                    youtube::MissingTool::YtDlp => ErrorCode::YtdlpMissing,
+                    youtube::MissingTool::JsRuntime => ErrorCode::JsRuntimeMissing,
+                    youtube::MissingTool::Ffmpeg => ErrorCode::FfmpegMissing,
+                };
+                HostError::new(code, msg)
+            })?;
     }
 
     let name_hint = if is_stream {
@@ -472,6 +479,8 @@ async fn run_youtube_pipeline(ctx: &Ctx, entry: QueueEntry, cancel: youtube::Can
         }
         Ok(s) => s,
         Err(e) => {
+            // Sites change often; an outdated yt-dlp is the usual cause.
+            shell::update_after_extraction_failure(&ctx.app);
             emit_youtube_status(ctx, &parent_id, "(failed)", "error", Some(e.to_string()));
             return;
         }
@@ -583,7 +592,8 @@ async fn run_manifest_pipeline(ctx: &Ctx, entry: QueueEntry, cancel: youtube::Ca
     let mut last_emit = std::time::Instant::now();
     let result = stream_dl::download(
         stream_dl::StreamJob {
-            program: std::ffi::OsStr::new("yt-dlp"),
+            program: &components::tool_program(components::Tool::YtDlp),
+            extra_args: &components::yt_dlp_args(),
             url: &entry.url,
             headers: &entry.headers,
             dir: &entry.dir,
@@ -933,7 +943,8 @@ fn default_save_dir(app: AppHandle) -> String {
 #[tauri::command]
 fn suggested_connections() -> usize {
     // A sensible default: scale with cores, capped at the slider max.
-    (num_cpus::get() * 2).clamp(4, 16)
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    (cores * 2).clamp(4, 16)
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,6 +1011,18 @@ impl bridge::BridgeHost for TauriBridgeHost {
     fn status_changed(&self, info: &bridge::BridgeInfo) {
         let _ = self.app.emit_all("bridge-status", info);
     }
+
+    fn pairing_requested(&self, prompt: &bridge::PairingPrompt) {
+        // The prompt must be seen even if the app sits in the tray.
+        shell::show_main(&self.app);
+        let _ = self.app.emit_all("pairing-request", prompt);
+    }
+
+    fn pairing_closed(&self, id: &str) {
+        let _ = self
+            .app
+            .emit_all("pairing-closed", BridgeRequestRemoved { id: id.into() });
+    }
 }
 
 type BridgeState<'a> = State<'a, Arc<bridge::Bridge>>;
@@ -1047,12 +1070,14 @@ fn dismiss_bridge_request(bridge: BridgeState<'_>, id: String) -> Result<(), Str
 /// Another launch was attempted: bring our window forward, and offer any
 /// http(s) URL it was given as a download (as an Accept/Dismiss card).
 fn on_second_launch(app: &AppHandle, argv: &[String]) {
-    tracing::info!("second launch: focusing the running window");
-    if let Some(w) = app.get_window("main") {
-        let _ = w.unminimize();
-        let _ = w.show();
-        let _ = w.set_focus();
+    let hooks = std::env::var_os(shell::TEST_HOOKS_ENV).is_some();
+    if let Some(id) = shell::test_tray_action(hooks, argv) {
+        tracing::info!(id, "test hook: tray menu action");
+        shell::menu_action(app, id);
+        return;
     }
+    tracing::info!("second launch: focusing the running window");
+    shell::show_main(app);
     let urls: Vec<String> = argv
         .iter()
         .skip(1)
@@ -1078,17 +1103,33 @@ fn on_second_launch(app: &AppHandle, argv: &[String]) {
     });
 }
 
+/// The global log level from `RUST_LOG` (default `info`).
+fn log_level() -> tracing_subscriber::filter::LevelFilter {
+    use tracing_subscriber::filter::LevelFilter;
+    match std::env::var("RUST_LOG")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "trace" => LevelFilter::TRACE,
+        "debug" => LevelFilter::DEBUG,
+        "warn" => LevelFilter::WARN,
+        "error" => LevelFilter::ERROR,
+        "off" => LevelFilter::OFF,
+        _ => LevelFilter::INFO,
+    }
+}
+
 fn main() {
-    // Structured logging; control verbosity with RUST_LOG (e.g. RUST_LOG=debug).
+    // Structured logging; control verbosity with RUST_LOG=trace|debug|info|warn|error
+    // (one global level: per-target filters would pull a regex engine into the exe).
     // Also feeds the in-app log panel (INFO+ from this app, WARN+ from deps).
     let logs = Arc::new(logs::LogBuffer::default());
     {
         use tracing_subscriber::prelude::*;
         tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-            )
+            .with(log_level())
             .with(tracing_subscriber::fmt::layer())
             .with(logs::LogLayer(logs.clone()))
             .init();
@@ -1127,6 +1168,13 @@ fn main() {
         };
 
     let bridge_config = data_dir.join(bridge::CONFIG_FILE);
+    let local_dir =
+        tauri::api::path::app_local_data_dir(context.config()).unwrap_or_else(|| data_dir.clone());
+    let settings_path = data_dir.join(app_settings::SETTINGS_FILE);
+    let app_settings = app_settings::AppSettings::load(&settings_path);
+    let args: Vec<String> = std::env::args().collect();
+    // Started by the "Start with Windows" entry and told to stay in the tray?
+    let start_hidden = app_settings::launched_at_login(&args) && app_settings.start_minimized;
     let store = Arc::new(JsonFileStore::new(history_file(&data_dir)));
     let (history, requeue) = History::open(store, now_secs());
     let history = Arc::new(history);
@@ -1142,6 +1190,15 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             on_second_launch(app, &argv);
         }))
+        .system_tray(shell::tray())
+        .on_system_tray_event(shell::on_tray_event)
+        .on_window_event(|event| {
+            // Closing the window keeps the app (and browser take-over) alive.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
+                api.prevent_close();
+                shell::hide_to_tray(event.window());
+            }
+        })
         .manage(AppState {
             manager: Arc::new(DownloadManager::new()),
             queue: Arc::new(QueueManager::default()),
@@ -1175,6 +1232,15 @@ fn main() {
             check_prerequisites,
             default_save_dir,
             suggested_connections,
+            shell::get_components_status,
+            shell::install_components,
+            shell::ytdlp_version,
+            shell::check_ytdlp_update,
+            shell::set_ytdlp_auto_update,
+            shell::get_app_settings,
+            shell::set_app_settings,
+            shell::get_pending_pairing,
+            shell::answer_pairing,
         ])
         .setup(move |app| {
             let handle = app.handle();
@@ -1189,6 +1255,30 @@ fn main() {
             );
             app.manage(bridge.clone());
             tauri::async_runtime::spawn(async move { bridge.ensure_running().await });
+            // External tools (yt-dlp, QuickJS, FFmpeg): one resolver for
+            // the whole app; anything missing is downloaded on first run.
+            let components = Arc::new(components::Components::new(
+                components::Manifest::embedded(),
+                components::Locations::system(&local_dir),
+                app.state::<AppState>().client.clone(),
+                Arc::new(shell::TauriComponentEvents { app: app.handle() }),
+            ));
+            components::set_global(components.clone());
+            let needs_setup = !components.missing().is_empty();
+            app.manage(shell::ShellState {
+                components,
+                settings: StdMutex::new(app_settings),
+                settings_path,
+                setting_up: std::sync::atomic::AtomicBool::new(false),
+            });
+            if needs_setup {
+                let handle = app.handle();
+                tauri::async_runtime::spawn(async move { shell::run_setup(&handle).await });
+            }
+            shell::spawn_update_loop(app.handle());
+            if !start_hidden {
+                shell::show_main(&app.handle());
+            }
             let ctx = Ctx::new(&app.handle(), app.state::<AppState>().inner());
             tauri::async_runtime::spawn(ctx.history.clone().run_saver(SAVE_DEBOUNCE));
             // Scheduled downloads come back on their own: future ones re-arm

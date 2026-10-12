@@ -71,6 +71,25 @@ const TAKEOVER_BURST: usize = 20;
 const TAKEOVER_WINDOW: Duration = Duration::from_secs(10);
 /// The same URL arriving again this soon is answered with the first result.
 const DEDUPE_WINDOW: Duration = Duration::from_secs(5);
+/// Pairing prompts per minute (a hostile page can't nag the user).
+const PAIR_ATTEMPTS: usize = 3;
+const PAIR_WINDOW: Duration = Duration::from_secs(60);
+/// How long the Allow / Deny prompt waits before counting as denied.
+const PAIR_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Extension IDs that ship allowed, so nobody has to type one: the
+/// development build (its ID is fixed by the `key` in the extension's
+/// manifest) and, once published, the Chrome Web Store ID.
+pub const DEV_EXTENSION_ID: &str = "pcmcmknffhfehgpkoedecnabbphgnabg";
+/// PLACEHOLDER: set to the 32-letter Web Store ID when the extension is published.
+pub const WEB_STORE_EXTENSION_ID: Option<&str> = None;
+
+/// The IDs allowed out of the box (settings can add more under Advanced).
+pub fn shipped_extension_ids() -> Vec<&'static str> {
+    std::iter::once(DEV_EXTENSION_ID)
+        .chain(WEB_STORE_EXTENSION_ID)
+        .collect()
+}
 const MAX_BATCH: usize = 100;
 const MAX_URL: usize = 8 * 1024;
 const MAX_COOKIES: usize = 32 * 1024;
@@ -134,12 +153,20 @@ pub enum ErrorCode {
     AppBusy,
     /// 503: yt-dlp is not installed (stream downloads).
     YtdlpMissing,
+    /// 503: no JavaScript runtime for yt-dlp (QuickJS, deno or node).
+    JsRuntimeMissing,
     /// 503: ffmpeg is not installed (stream downloads).
     FfmpegMissing,
     /// The stream is DRM-protected. Reported on the job (its error text),
     /// because it is only discovered after the request was accepted.
     #[allow(dead_code)] // part of the documented wire contract
     DrmProtected,
+    /// 403: the user clicked Deny (or didn't answer) on the pairing prompt.
+    PairingDenied,
+    /// 409: another pairing prompt is already on screen.
+    PairingPending,
+    /// 429: too many pairing attempts; try again in a minute.
+    PairingRateLimited,
     /// 404: unknown endpoint, or no such pending request.
     NotFound,
     /// 500: anything else.
@@ -156,8 +183,13 @@ impl ErrorCode {
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::AppBusy => StatusCode::TOO_MANY_REQUESTS,
-            Self::YtdlpMissing | Self::FfmpegMissing => StatusCode::SERVICE_UNAVAILABLE,
+            Self::YtdlpMissing | Self::JsRuntimeMissing | Self::FfmpegMissing => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             Self::DrmProtected => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::PairingDenied => StatusCode::FORBIDDEN,
+            Self::PairingPending => StatusCode::CONFLICT,
+            Self::PairingRateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -733,6 +765,44 @@ impl PendingRequest {
     }
 }
 
+/// The "Allow this extension?" prompt (`pairing-request` event).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingPrompt {
+    pub id: String,
+    pub extension_id: String,
+    /// "Chrome", "Microsoft Edge" or "browser" (from the User-Agent; display only).
+    pub browser: String,
+}
+
+struct PendingPair {
+    prompt: PairingPrompt,
+    answer: tokio::sync::oneshot::Sender<bool>,
+}
+
+/// Clears the prompt when the waiting request ends for any reason.
+struct PairGuard {
+    bridge: Arc<Bridge>,
+    id: String,
+}
+
+impl Drop for PairGuard {
+    fn drop(&mut self) {
+        let still_ours = {
+            let mut slot = lock(&self.bridge.pairing);
+            if slot.as_ref().is_some_and(|p| p.prompt.id == self.id) {
+                slot.take();
+                true
+            } else {
+                false
+            }
+        };
+        if still_ours {
+            self.bridge.host.pairing_closed(&self.id);
+        }
+    }
+}
+
 /// `get_bridge_info` result and `bridge-status` event payload.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -747,6 +817,8 @@ pub struct BridgeInfo {
     /// For the UI's Copy-token button only (local IPC, never logged).
     pub token: String,
     pub default_port: u16,
+    /// IDs allowed without any setup (shown read-only in the UI).
+    pub shipped_extension_ids: Vec<String>,
     pub protocol: u32,
 }
 
@@ -761,6 +833,10 @@ pub trait BridgeHost: Send + Sync {
     fn pending_added(&self, req: &PendingRequest);
     fn pending_removed(&self, id: &str);
     fn status_changed(&self, info: &BridgeInfo);
+    /// Show the "Allow this extension?" prompt (one at a time).
+    fn pairing_requested(&self, prompt: &PairingPrompt);
+    /// The prompt was answered, timed out, or the extension went away.
+    fn pairing_closed(&self, id: &str);
 }
 
 // ---------------------------------------------------------------------------
@@ -795,6 +871,11 @@ pub struct Bridge {
     recent: Mutex<HashMap<String, (Instant, Accepted)>>,
     /// Start times of recent auto-started take-overs (rate limit).
     takeover_starts: Mutex<VecDeque<Instant>>,
+    /// The pairing prompt currently on screen, if any.
+    pairing: Mutex<Option<PendingPair>>,
+    pair_attempts: Mutex<VecDeque<Instant>>,
+    /// Prompt timeout in ms (shortened by tests).
+    pair_timeout_ms: std::sync::atomic::AtomicU64,
     server: tokio::sync::Mutex<Option<Running>>,
 }
 
@@ -816,6 +897,9 @@ impl Bridge {
             pending: Mutex::new(Vec::new()),
             recent: Mutex::new(HashMap::new()),
             takeover_starts: Mutex::new(VecDeque::new()),
+            pairing: Mutex::new(None),
+            pair_attempts: Mutex::new(VecDeque::new()),
+            pair_timeout_ms: std::sync::atomic::AtomicU64::new(PAIR_TIMEOUT.as_millis() as u64),
             server: tokio::sync::Mutex::new(None),
         })
     }
@@ -879,6 +963,10 @@ impl Bridge {
             error: status.error.clone(),
             token,
             default_port: DEFAULT_PORT,
+            shipped_extension_ids: shipped_extension_ids()
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
             protocol: PROTOCOL_VERSION,
         }
     }
@@ -992,12 +1080,110 @@ impl Bridge {
     /// The `Origin` value if it is an allowed `chrome-extension://<id>`.
     fn allowed_origin(&self, origin: &HeaderValue) -> Option<HeaderValue> {
         let id = origin.to_str().ok()?.strip_prefix("chrome-extension://")?;
-        let allowed = lock(&self.config)
-            .settings
-            .allowed_extension_ids
-            .iter()
-            .any(|a| a == id);
+        let allowed = shipped_extension_ids().contains(&id)
+            || lock(&self.config)
+                .settings
+                .allowed_extension_ids
+                .iter()
+                .any(|a| a == id);
         allowed.then(|| origin.clone())
+    }
+
+    /// The pairing prompt on screen (the UI asks once on mount).
+    pub fn pending_pairing(&self) -> Option<PairingPrompt> {
+        lock(&self.pairing).as_ref().map(|p| p.prompt.clone())
+    }
+
+    /// The user's answer to prompt `id`.
+    pub fn answer_pairing(&self, id: &str, allow: bool) -> Result<(), HostError> {
+        let pending = {
+            let mut slot = lock(&self.pairing);
+            match slot.as_ref() {
+                Some(p) if p.prompt.id == id => slot.take(),
+                _ => None,
+            }
+        };
+        let Some(p) = pending else {
+            return Err(HostError::new(
+                ErrorCode::NotFound,
+                "no such pairing request",
+            ));
+        };
+        self.host.pairing_closed(id);
+        // The waiting HTTP request may already be gone; that's fine.
+        let _ = p.answer.send(allow);
+        Ok(())
+    }
+
+    /// `POST /v1/pair`: ask the user, then hand the token to the extension.
+    /// `extension_id` comes from the (already allow-listed) Origin header.
+    async fn pair(
+        self: &Arc<Self>,
+        extension_id: String,
+        browser: &str,
+    ) -> Result<String, HostError> {
+        let now = Instant::now();
+        {
+            let mut attempts = lock(&self.pair_attempts);
+            while attempts
+                .front()
+                .is_some_and(|t| now.duration_since(*t) >= PAIR_WINDOW)
+            {
+                attempts.pop_front();
+            }
+            if attempts.len() >= PAIR_ATTEMPTS {
+                return Err(HostError::new(
+                    ErrorCode::PairingRateLimited,
+                    "too many pairing attempts; try again in a minute",
+                ));
+            }
+            attempts.push_back(now);
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let prompt = PairingPrompt {
+            id: Uuid::new_v4().to_string(),
+            extension_id,
+            browser: browser.to_string(),
+        };
+        {
+            let mut slot = lock(&self.pairing);
+            if slot.is_some() {
+                // Never stack prompts.
+                return Err(HostError::new(
+                    ErrorCode::PairingPending,
+                    "a pairing request is already waiting in IDM Replica",
+                ));
+            }
+            *slot = Some(PendingPair {
+                prompt: prompt.clone(),
+                answer: tx,
+            });
+        }
+        info!(browser, "pairing requested by the browser extension");
+        self.host.pairing_requested(&prompt);
+        // If the extension disconnects, the prompt goes away with it.
+        let _cleanup = PairGuard {
+            bridge: self.clone(),
+            id: prompt.id.clone(),
+        };
+        let wait = Duration::from_millis(
+            self.pair_timeout_ms
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
+        match tokio::time::timeout(wait, rx).await {
+            Ok(Ok(true)) => {
+                info!("pairing allowed");
+                Ok(lock(&self.config).token.clone())
+            }
+            Ok(_) => Err(HostError::new(
+                ErrorCode::PairingDenied,
+                "pairing was denied in IDM Replica",
+            )),
+            Err(_) => Err(HostError::new(
+                ErrorCode::PairingDenied,
+                "nobody answered the pairing prompt in IDM Replica",
+            )),
+        }
     }
 
     /// Reserve an auto-start slot for a take-over, or `false` when more than
@@ -1242,6 +1428,7 @@ fn router(bridge: Arc<Bridge>) -> Router {
     Router::new()
         .route("/v1/ping", get(ping))
         .route("/v1/auth", get(auth))
+        .route("/v1/pair", post(pair))
         .route("/v1/download", post(download))
         .route("/v1/batch", post(batch))
         .fallback(not_found)
@@ -1253,6 +1440,10 @@ fn router(bridge: Arc<Bridge>) -> Router {
 /// Set by the guard: the request came from the allowed extension's origin.
 #[derive(Clone, Copy)]
 struct FromExtension(bool);
+
+/// Set by the guard: the allowed extension's ID, taken from `Origin`.
+#[derive(Clone)]
+struct ExtensionId(Option<String>);
 
 /// `Host` is a loopback name — so a DNS-rebinding page (Host: evil.example)
 /// cannot talk to us even before the Origin and token checks.
@@ -1331,12 +1522,28 @@ async fn guard(State(bridge): State<Arc<Bridge>>, mut req: Request, next: Next) 
         return resp;
     }
     let is_ping = req.method() == Method::GET && req.uri().path() == "/v1/ping";
-    if !is_ping && !bridge.token_ok(req.headers().get(TOKEN_HEADER)) {
+    // Pairing is how the extension GETS the token, so it can't require one;
+    // instead it requires the allowed extension Origin and the user's OK.
+    let is_pair = req.method() == Method::POST && req.uri().path() == "/v1/pair";
+    if is_pair && origin.is_none() {
+        return ApiError::new(
+            ErrorCode::OriginNotAllowed,
+            "pairing is only available to the IDM Replica browser extension",
+        )
+        .into_response();
+    }
+    if !is_ping && !is_pair && !bridge.token_ok(req.headers().get(TOKEN_HEADER)) {
         let resp =
             ApiError::new(ErrorCode::BadToken, "missing or invalid X-IDM-Token").into_response();
         return with_cors(resp, &origin);
     }
     req.extensions_mut().insert(FromExtension(origin.is_some()));
+    let extension_id = origin
+        .as_ref()
+        .and_then(|o| o.to_str().ok())
+        .and_then(|o| o.strip_prefix("chrome-extension://"))
+        .map(str::to_string);
+    req.extensions_mut().insert(ExtensionId(extension_id));
     let resp = next.run(req).await;
     with_cors(resp, &origin)
 }
@@ -1350,6 +1557,32 @@ async fn ping() -> Response {
             "bridge": PROTOCOL_VERSION,
         }),
     )
+}
+
+/// One-click pairing. The ID is the Origin's, never anything in the body.
+async fn pair(
+    State(bridge): State<Arc<Bridge>>,
+    Extension(ExtensionId(id)): Extension<ExtensionId>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(id) = id else {
+        return ApiError::new(ErrorCode::OriginNotAllowed, "origin not allowed").into_response();
+    };
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let browser = if ua.contains("Edg/") {
+        "Microsoft Edge"
+    } else if ua.contains("Chrome/") {
+        "Chrome"
+    } else {
+        "browser"
+    };
+    match bridge.pair(id, browser).await {
+        Ok(token) => json_response(StatusCode::OK, &json!({ "ok": true, "token": token })),
+        Err(e) => ApiError::from(e).into_response(),
+    }
 }
 
 /// Token check without side effects: 204 when the guard let it through.
@@ -1506,6 +1739,8 @@ mod tests {
         fn status_changed(&self, info: &BridgeInfo) {
             lock(&self.statuses).push(info.clone());
         }
+        fn pairing_requested(&self, _prompt: &PairingPrompt) {}
+        fn pairing_closed(&self, _id: &str) {}
     }
 
     fn settings(ids: &[&str], ask: bool) -> BridgeSettings {
@@ -2140,6 +2375,8 @@ mod policy_tests {
         started: Mutex<Vec<BridgeJob>>,
         pending: Mutex<Vec<PendingRequest>>,
         fail: Mutex<Option<HostError>>,
+        prompts: Mutex<Vec<PairingPrompt>>,
+        closed: Mutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -2157,6 +2394,12 @@ mod policy_tests {
         }
         fn pending_removed(&self, _id: &str) {}
         fn status_changed(&self, _info: &BridgeInfo) {}
+        fn pairing_requested(&self, prompt: &PairingPrompt) {
+            lock(&self.prompts).push(prompt.clone());
+        }
+        fn pairing_closed(&self, id: &str) {
+            lock(&self.closed).push(id.to_string());
+        }
     }
 
     async fn serve(ask: bool, confirm_takeover: bool) -> (Arc<Bridge>, Arc<Host>, String) {
@@ -2272,6 +2515,10 @@ mod policy_tests {
         *lock(&host.fail) = Some(HostError::new(ErrorCode::FfmpegMissing, "install ffmpeg"));
         let (s, v) = send(&base, json!({ "url": "https://vimeo.com/123" }), false).await;
         assert_eq!((s, v["code"].clone()), (503, json!("ffmpeg_missing")));
+        *lock(&host.fail) = Some(HostError::new(ErrorCode::JsRuntimeMissing, "no runtime"));
+        let yt = json!({ "url": "https://www.youtube.com/watch?v=lmnopqrstuv" });
+        let (s, v) = send(&base, yt, false).await;
+        assert_eq!((s, v["code"].clone()), (503, json!("js_runtime_missing")));
     }
 
     #[tokio::test]
@@ -2424,5 +2671,180 @@ mod policy_tests {
             .await
             .unwrap_err();
         assert_eq!(e.code, ErrorCode::BadUrl);
+    }
+
+    // ---- One-click pairing (POST /v1/pair) --------------------------------
+
+    fn pair_req(base: &str, origin: Option<&str>) -> reqwest::RequestBuilder {
+        let mut r = reqwest::Client::new()
+            .post(format!("{base}/v1/pair"))
+            .header("user-agent", "Mozilla/5.0 Chrome/141.0 Safari/537.36")
+            // A body claiming another ID must be irrelevant.
+            .header("content-type", "application/json")
+            .body(r#"{"extensionId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#);
+        if let Some(o) = origin {
+            r = r.header("origin", o);
+        }
+        r
+    }
+
+    async fn body_of(r: reqwest::Response) -> (u16, String) {
+        (r.status().as_u16(), r.text().await.unwrap())
+    }
+
+    /// Wait until the host was asked to show a prompt, then return it.
+    async fn next_prompt(host: &Host, n: usize) -> PairingPrompt {
+        for _ in 0..200 {
+            if let Some(p) = lock(&host.prompts).get(n).cloned() {
+                return p;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("no pairing prompt #{n}");
+    }
+
+    #[tokio::test]
+    async fn pairing_needs_the_extension_origin() {
+        let (bridge, host, base) = serve(true, false).await;
+        // No Origin at all (curl, another local program).
+        let (s, body) = body_of(pair_req(&base, None).send().await.unwrap()).await;
+        assert_eq!(s, 403, "{body}");
+        assert!(body.contains("origin_not_allowed") && !body.contains(TOKEN));
+        // A web page, a spoofed scheme, an extension that isn't allowed.
+        for origin in [
+            "https://evil.example",
+            "http://127.0.0.1:8080",
+            "null",
+            "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "chrome-extension://",
+        ] {
+            let (s, body) = body_of(pair_req(&base, Some(origin)).send().await.unwrap()).await;
+            assert_eq!(s, 403, "{origin}: {body}");
+            assert!(!body.contains(TOKEN), "{origin} leaked the token");
+        }
+        assert!(lock(&host.prompts).is_empty(), "no prompt for a bad origin");
+        assert!(bridge.pending_pairing().is_none());
+    }
+
+    #[tokio::test]
+    async fn allow_returns_the_token_and_the_id_comes_from_the_origin() {
+        let (bridge, host, base) = serve(true, false).await;
+        let origin = format!("chrome-extension://{EXT}");
+        let req = tokio::spawn(pair_req(&base, Some(&origin)).send());
+        let prompt = next_prompt(&host, 0).await;
+        assert_eq!(
+            prompt.extension_id, EXT,
+            "ID from Origin, not from the body"
+        );
+        assert_eq!(prompt.browser, "Chrome");
+        assert_eq!(bridge.pending_pairing(), Some(prompt.clone()));
+        bridge.answer_pairing(&prompt.id, true).unwrap();
+        let (s, body) = body_of(req.await.unwrap().unwrap()).await;
+        assert_eq!(s, 200, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["ok"], json!(true));
+        assert_eq!(v["token"], json!(TOKEN));
+        assert!(bridge.pending_pairing().is_none());
+        assert!(lock(&host.closed).contains(&prompt.id));
+        assert!(bridge.answer_pairing(&prompt.id, true).is_err());
+    }
+
+    #[tokio::test]
+    async fn the_shipped_extension_id_works_with_an_empty_allow_list() {
+        let host = Arc::new(Host::default());
+        let bridge = Bridge::new(
+            host.clone(),
+            None,
+            0,
+            BridgeSettings::default(),
+            TOKEN.into(),
+            None,
+        );
+        bridge.ensure_running().await;
+        let base = format!("http://127.0.0.1:{}", bridge.info().port.unwrap());
+        assert!(bridge
+            .info()
+            .shipped_extension_ids
+            .contains(&DEV_EXTENSION_ID.to_string()));
+        let origin = format!("chrome-extension://{DEV_EXTENSION_ID}");
+        let req = tokio::spawn(pair_req(&base, Some(&origin)).send());
+        let prompt = next_prompt(&host, 0).await;
+        bridge.answer_pairing(&prompt.id, true).unwrap();
+        assert_eq!(req.await.unwrap().unwrap().status().as_u16(), 200);
+    }
+
+    #[tokio::test]
+    async fn deny_and_timeout_never_leak_the_token() {
+        let (bridge, host, base) = serve(true, false).await;
+        let origin = format!("chrome-extension://{EXT}");
+        let req = tokio::spawn(pair_req(&base, Some(&origin)).send());
+        let prompt = next_prompt(&host, 0).await;
+        bridge.answer_pairing(&prompt.id, false).unwrap();
+        let (s, body) = body_of(req.await.unwrap().unwrap()).await;
+        assert_eq!(s, 403);
+        assert!(body.contains("pairing_denied"), "{body}");
+        assert!(!body.contains(TOKEN) && !body.contains("token\""), "{body}");
+
+        // Nobody answers: denied after the timeout, prompt removed.
+        bridge
+            .pair_timeout_ms
+            .store(150, std::sync::atomic::Ordering::Relaxed);
+        let (s, body) = body_of(pair_req(&base, Some(&origin)).send().await.unwrap()).await;
+        assert_eq!(s, 403);
+        assert!(
+            body.contains("pairing_denied") && !body.contains(TOKEN),
+            "{body}"
+        );
+        assert!(bridge.pending_pairing().is_none());
+        assert_eq!(lock(&host.closed).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn prompts_never_stack_and_attempts_are_rate_limited() {
+        let (bridge, host, base) = serve(true, false).await;
+        let origin = format!("chrome-extension://{EXT}");
+        let first = tokio::spawn(pair_req(&base, Some(&origin)).send());
+        let prompt = next_prompt(&host, 0).await;
+        // A second request while the prompt is up: refused, no second prompt.
+        let (s, body) = body_of(pair_req(&base, Some(&origin)).send().await.unwrap()).await;
+        assert_eq!(s, 409);
+        assert!(body.contains("pairing_pending"), "{body}");
+        assert_eq!(lock(&host.prompts).len(), 1);
+        bridge.answer_pairing(&prompt.id, false).unwrap();
+        assert_eq!(first.await.unwrap().unwrap().status().as_u16(), 403);
+
+        // Third attempt in the minute is still allowed to prompt…
+        let third = tokio::spawn(pair_req(&base, Some(&origin)).send());
+        let p3 = next_prompt(&host, 1).await;
+        bridge.answer_pairing(&p3.id, false).unwrap();
+        assert_eq!(third.await.unwrap().unwrap().status().as_u16(), 403);
+        // …the fourth is rate limited without showing anything.
+        let (s, body) = body_of(pair_req(&base, Some(&origin)).send().await.unwrap()).await;
+        assert_eq!(s, 429);
+        assert!(
+            body.contains("pairing_rate_limited") && !body.contains(TOKEN),
+            "{body}"
+        );
+        assert_eq!(lock(&host.prompts).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_disconnected_extension_takes_its_prompt_with_it() {
+        let (bridge, host, base) = serve(true, false).await;
+        let origin = format!("chrome-extension://{EXT}");
+        let req = tokio::spawn(pair_req(&base, Some(&origin)).send());
+        let prompt = next_prompt(&host, 0).await;
+        req.abort();
+        for _ in 0..200 {
+            if bridge.pending_pairing().is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            bridge.pending_pairing().is_none(),
+            "prompt must not get stuck"
+        );
+        assert!(lock(&host.closed).contains(&prompt.id));
     }
 }

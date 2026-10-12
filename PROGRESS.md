@@ -1,59 +1,58 @@
-# PROGRESS — session 7 (2026-10-09): app ↔ extension gaps, take-over by default
+# PROGRESS — session 9 (2026-10-12): session-8 leftovers closed
 
-Sessions 1–6 done. Contract: README "Browser bridge HTTP API" (endpoints, fields, error codes).
+Branch: `clean-install-prep` (committed locally, **not pushed**). `main` is unchanged.
+The installer has not been started.
 
-## Done
-- **Single instance:** `tauri-plugin-single-instance` (git, v1 branch). A second launch
-  focuses the window, passes an http(s) argv URL as a confirm card, and exits. Second
-  defence: `instance_lock.rs` holds an OS file lock (`File::try_lock`, so `rust-version`
-  is now 1.89) on `app.lock` *before* any file is opened. The OS releases it on a crash.
-- **HLS/DASH:** `stream_dl.rs`. A `.m3u8`/`.mpd` URL (`kind` stream or auto, or an HLS/DASH
-  `mediaType`) is downloaded by yt-dlp:
-  - `--add-header` for Referer/UA/Cookie, `-f` from `quality` (best|audio|144–4320).
-  - Progress through the normal sink (one card); cancel kills the process tree.
-  - Private temp dir removed afterwards; output outside the folder is refused.
-  - DRM → "This stream is DRM-protected…". New `JobKind::Manifest`; quality persisted.
-- **Error codes:** `{ok:false, code, message(+error)}`, 14 stable codes (README table);
-  `GET /v1/auth`; tool codes from a structured preflight. Cookie cap 32 KB.
-- **Sites:** `is_video_page` covers FB watch/reel/videos/share/fb.watch, Instagram, Reddit,
-  Twitch VODs/clips, Dailymotion, TikTok. The extension's `sites.ts` uses the same rules.
-- **Take-over (extension):** ON by default, min size 0, empty lists, plus
-  "let Chrome handle these types" and "never take over" sites.
-  - Pure `decideTakeover` runs first; the send waits for `ok`, and only then Chrome's
-    copy is cancelled and erased.
-  - Each download id is handled once (OnceSet); POSTs are tracked via `onBeforeRequest`.
-  - Falls back for blob/data/filesystem/file, POST and incognito, with a "!" badge and toast.
-- **Take-over (app policy):** `source` takeover|user-action|page-scan|command-line.
-  - A take-over starts at once only from the allowed extension origin + token, up to
-    20 per 10 s (the excess goes pending).
-  - Same URL within 5 s → first result (`duplicate`); non-take-over pending max 50 (`app_busy`).
-  - App setting "Confirm browser take-over downloads" (off). `join_inside` guard in the engine.
+## Final size table (release exe, measured)
+| Build | Size | Throughput (median, 3000 MB local file, 6 runs) |
+|---|---|---|
+| opt 3, abort (session 8 profile) | 4.22 MB | not benchmarked |
+| opt 3, unwind | 7.11 MB | ~1045 MB/s |
+| **opt "s", unwind (current profile)** | **5.15 MB** (5,401,088 bytes) | ~1055 MB/s |
+| opt "z", unwind | 4.69 MB | ~905 MB/s (several slow runs) |
 
-## Verified (actually run)
-- All green: fmt --check, clippy -D warnings, `cargo test` **95** (new: 3 lock, 9 stream_dl
-  with a fake yt-dlp, 11 bridge policy, detection, join_inside), root tsc, `npm test` **48**,
-  extension typecheck, vitest **36**, build.
-- **Real app binary:**
-  - Second launch → "handing over", the first logged "focusing" and turned the CLI URL
-    into a confirm card (3 runs).
-  - curl `.m3u8` → yt-dlp → `index.mp4` 12.0 s h264+aac, no temp left (deleted after).
-  - Live codes: bad_token, origin_not_allowed, bad_url, unsupported_site, bad_request,
-    unsupported_media_type, ytdlp_missing (yt-dlp off PATH); `/v1/auth` 204.
-- **Real Chrome** (throwaway profile): paired via `/v1/auth`; the test page lists `index.m3u8`
-  once (no `.ts`); sending it reached the app as `manifest=true source=UserAction`.
+`[profile.release]`: `opt-level = "s"`, `lto`, `codegen-units = 1`, `panic = "unwind"`, `strip`.
+Frontend bundle: JS 178,177 → 177,467 bytes, CSS 9,769 (unchanged); minified, 0 source maps.
+79% of the JS is React itself; the app's own code is about 35 KB.
 
-## NOT verified
-- **Take-over in a browser:** Chrome under CDP fetches the file but never creates a
-  download (same as last session), so cancel/erase, the badge hint and POST/blob
-  fall-backs are unit-tested only (decision + mocked chrome/fetch). See README step 7.
-- In 1 of 3 two-launch runs the *first* instance had also exited (no log line).
-  I couldn't reproduce it in 2 more runs. Watch for it in manual test (a).
-- The focus itself (no dev UI was loaded), macOS/Linux plugin behaviour, real DRM HLS.
+## Done this session (what was actually run)
+- **Checks, at the end:** cargo fmt --check, clippy --all-targets -D warnings, cargo test
+  **120**, root tsc + npm test **52**, extension typecheck + vitest **39** + build — all green.
+  `THIRD_PARTY_NOTICES.md` regenerated (no change).
+- **Benchmark:** `scripts/bench-download.mjs` (local range server → release exe via the bridge as
+  a take-over, SHA-256 checked). 500 MB × 3 was too short to separate the builds (all ~1 GB/s),
+  so the decision uses 3000 MB × 6 per build. This is a loopback ceiling test, not a network test.
+- **Panic = unwind** applied (your decision).
+- **Tray**, on the release exe: Pause all → server sent 0 bytes for 3 s; Resume all → flow back,
+  all 16 ranges resumed mid-chunk (none from 0). Quit with a running download → process gone in
+  1.1 s, `.idm` sidecar present, next launch shows "Interrupted — resumable" (UI text + history).
+  Driven through a test hook, not the real menu: env `IDM_REPLICA_TEST_HOOKS` + a second launch
+  with `--test-tray=<id>` calls the same `shell::menu_action` the menu calls.
+- **Tray notice bug fixed:** the dialog did open, but behind other windows. It is now owned by
+  the app window (the window hides on OK). Confirmed on screen with a screenshot.
+- **Preflight:** JS runtime check (QuickJS → deno → node on PATH), new code `js_runtime_missing`
+  (503), `--js-runtimes node` when node is the fallback, extension message, 4 new Rust tests.
+- **Docs:** architecture `.mmd` files, README (error table, components, tray, release profile),
+  `NOTES_extension.md` (FFmpeg write-up under "Needs decision"), CLAUDE.md key-files table.
+
+## Not verified / still open
+- **The real tray menu was never clicked.** Windows 11's tray is not reachable by UI Automation
+  here and the taskbar is auto-hidden. The OS menu → handler step needs a manual click (step c).
+- **Unix build not checked:** no Linux Rust target and no WSL on this machine.
+- `js_runtime_missing` is covered by unit tests only; not reproduced in the running app.
+- Panic behaviour is described from the code; no panic was injected to test it.
+- `npm run tauri dev` was not run this session (clippy's dev build and the release exe were).
+- Manual steps (a)–(d) are for you to run (see the session report).
+- CLAUDE.md "Tech Stack" is out of date (says tokio `full`, rustls, `num_cpus`, tools on PATH).
 
 ## Needs your decision
-Details in NOTES_extension.md:
-- persist download defaults in Rust for browser jobs;
-- a quality picker in the extension;
-- pause/resume for yt-dlp stream jobs.
+- **FFmpeg:** keep BtbN's 156 MB build, or build our own (~2–4 MB estimated, not built):
+  mux-only, or mux + HLS fallback (recommended). Details in `NOTES_extension.md`.
+- **Test hook** (`IDM_REPLICA_TEST_HOOKS` / `--test-tray=`) ships in the release exe, off unless
+  the env var is set. Keep it, or put it behind a cargo feature?
+- **Manifest jobs skip the JS-runtime check** (they don't need one). OK?
+- Still open from session 8: yt-dlp.exe is GPLv3+ as a bundled binary; Windows TLS vs rustls.
+- Should I update the stale CLAUDE.md "Tech Stack" section?
 
-## Next — run the manual steps (a)–(d) from this session's report, then pick from "needs decision".
+## Next step
+Run manual steps (a)–(d), answer the decisions above, then the installer session.

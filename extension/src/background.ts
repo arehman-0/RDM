@@ -3,12 +3,12 @@
 // in chrome.storage.local. All listeners are registered synchronously at the
 // top level (required for the worker to be woken by events).
 
-import { checkConnection, describeConn, sendBatch, sendDownload, type SendResult } from "./lib/bridge";
+import { checkConnection, describeConn, pair, sendBatch, sendDownload, type SendResult } from "./lib/bridge";
 import { guessFileName, guessQuality } from "./lib/filename";
 import { bestItem, mergeItem, type MediaItem } from "./lib/items";
 import { normalizeUrl, toRecordable } from "./lib/media";
 import { MSG } from "./lib/messages";
-import type { AllReply, ConnReply, DomMedia, MediaList, Request, SettingsReply } from "./lib/protocol";
+import type { AllReply, ConnReply, DomMedia, MediaList, PairReply, Request, SettingsReply } from "./lib/protocol";
 import { buildPayload, targetForItem, type DownloadPayload, type SendTarget } from "./lib/request";
 import {
   decideTakeover,
@@ -321,6 +321,14 @@ async function handle(msg: Request, sender: chrome.runtime.MessageSender): Promi
         extensionId: chrome.runtime.id,
         port: s.port,
       } satisfies ConnReply;
+    }
+    case "pair": {
+      // One-click pairing: the app asks the user, then hands us the token.
+      const s = await getSettings();
+      const r = await pair(s.port, fetch, chrome.runtime.id);
+      if (!r.ok) return { ok: false, error: r.error, code: r.code } satisfies PairReply;
+      await chrome.storage.local.set({ settings: { ...s, token: r.token } });
+      return { ok: true } satisfies PairReply;
     }
     case "get-settings":
       return { settings: await getSettings() } satisfies SettingsReply;

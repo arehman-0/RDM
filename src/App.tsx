@@ -1,8 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import { AddDownloadForm } from "./components/AddDownloadForm";
 import { BridgeRequests } from "./components/BridgeRequests";
 import { BrowserIntegrationPanel } from "./components/BrowserIntegrationPanel";
+import { ComponentsSetup } from "./components/ComponentsSetup";
+import { ComponentsPanel, PairingPrompt, StartupPanel } from "./components/ShellPanels";
 import type { CardCommand } from "./components/DownloadCard";
 import { DownloadList } from "./components/DownloadList";
 import { Header } from "./components/Header";
@@ -11,8 +13,10 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { useBridge } from "./hooks/useBridge";
 import { useDownloadEvents } from "./hooks/useDownloadEvents";
 import { useSettings } from "./hooks/useSettings";
+import { useAppSettings, useComponents, usePairing } from "./hooks/useShell";
 import { useToast } from "./hooks/useToast";
 import { displayOrder, globalStats } from "./lib/cards";
+import { needsSetup } from "./lib/components";
 import type { DownloadCard } from "./types";
 
 /** Backend command + arguments for each card action. */
@@ -44,6 +48,11 @@ export default function App() {
   const [state, dispatch] = useDownloadEvents();
   const [toast, flash] = useToast();
   const bridge = useBridge();
+  const components = useComponents();
+  const [appSettings, saveAppSettings] = useAppSettings(flash);
+  const pairing = usePairing();
+  // The setup screen can be put aside; "Install missing components" brings it back.
+  const [setupSkipped, setSetupSkipped] = useState(false);
 
   const cards = useMemo(() => displayOrder(state), [state]);
   const totals = useMemo(() => globalStats(cards), [cards]);
@@ -89,9 +98,26 @@ export default function App() {
         onMaxConcurrent={changeMaxConcurrent}
       />
       <BrowserIntegrationPanel info={bridge.info} flash={flash} />
+      <ComponentsPanel
+        info={components.info}
+        flash={flash}
+        onSetup={() => {
+          setSetupSkipped(false);
+          invoke("install_components").catch(() => {});
+        }}
+      />
+      <StartupPanel settings={appSettings} onChange={saveAppSettings} />
       <BridgeRequests pending={bridge.pending} flash={flash} />
       <DownloadList cards={cards} onCommand={onCommand} onClearCompleted={clearCompleted} />
       <LogPanel />
+      {components.info && needsSetup(components.info, setupSkipped) && (
+        <ComponentsSetup
+          info={components.info}
+          progress={components.progress}
+          onSkip={() => setSetupSkipped(true)}
+        />
+      )}
+      <PairingPrompt prompt={pairing} />
       {toast && <div className="toast">{toast}</div>}
     </div>
   );

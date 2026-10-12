@@ -17,6 +17,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::components::{self, Tool};
 use crate::process;
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
@@ -226,7 +227,7 @@ pub struct YtDlpExtractor {
 impl Default for YtDlpExtractor {
     fn default() -> Self {
         Self {
-            program: "yt-dlp".into(),
+            program: components::tool_program(Tool::YtDlp),
         }
     }
 }
@@ -255,55 +256,98 @@ impl Extractor for YtDlpExtractor {
     }
 }
 
-/// Verify both external binaries the pipeline needs are installed, returning a
+/// Verify everything the video pipeline needs is installed, returning a
 /// single actionable, OS-aware message listing whatever is missing.
 pub async fn preflight() -> Result<()> {
-    preflight_check().await.map_err(|(_, msg)| anyhow!(msg))
+    preflight_check(true).await.map_err(|(_, msg)| anyhow!(msg))
 }
 
 /// Which external tool is missing (for the bridge's machine-readable codes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MissingTool {
     YtDlp,
+    /// No JavaScript runtime (QuickJS, deno or node) for yt-dlp.
+    JsRuntime,
     Ffmpeg,
 }
 
-/// Like [`preflight`], but says which tool is missing first (yt-dlp wins).
-pub async fn preflight_check() -> std::result::Result<(), (MissingTool, String)> {
-    let have_ytdlp = binary_ok("yt-dlp", &["--version"]).await;
-    let have_ffmpeg = binary_ok("ffmpeg", &["-version"]).await;
-    let first = if !have_ytdlp {
-        MissingTool::YtDlp
-    } else if !have_ffmpeg {
-        MissingTool::Ffmpeg
-    } else {
-        return Ok(());
-    };
-    Err((first, missing_message(have_ytdlp, have_ffmpeg)))
+/// What the preflight found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Tools {
+    ytdlp: bool,
+    /// `true` also when the job doesn't need one.
+    js: bool,
+    ffmpeg: bool,
 }
 
-fn missing_message(have_ytdlp: bool, have_ffmpeg: bool) -> String {
+impl Tools {
+    /// The first missing tool: yt-dlp, then the JS runtime, then ffmpeg.
+    fn first_missing(self) -> Option<MissingTool> {
+        if !self.ytdlp {
+            Some(MissingTool::YtDlp)
+        } else if !self.js {
+            Some(MissingTool::JsRuntime)
+        } else if !self.ffmpeg {
+            Some(MissingTool::Ffmpeg)
+        } else {
+            None
+        }
+    }
+}
+
+/// Like [`preflight`], but says which tool is missing first. `need_js`: the
+/// job extracts a video page (yt-dlp needs a JavaScript runtime for YouTube);
+/// a plain HLS/DASH manifest doesn't.
+pub async fn preflight_check(need_js: bool) -> std::result::Result<(), (MissingTool, String)> {
+    // With the component manager: is each tool resolvable (components dir,
+    // bundled, PATH)? Without one (unit tests): can it be run from PATH?
+    let tools = if components::global().is_some() {
+        Tools {
+            ytdlp: components::has_tool(Tool::YtDlp),
+            js: !need_js || components::has_js_runtime(),
+            ffmpeg: components::has_tool(Tool::Ffmpeg),
+        }
+    } else {
+        let path: Vec<_> = std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).collect())
+            .unwrap_or_default();
+        Tools {
+            ytdlp: binary_ok("yt-dlp", &["--version"]).await,
+            js: !need_js || components::find_js_runtime(None, &path).is_some(),
+            ffmpeg: binary_ok("ffmpeg", &["-version"]).await,
+        }
+    };
+    match tools.first_missing() {
+        None => Ok(()),
+        Some(first) => Err((first, missing_message(tools))),
+    }
+}
+
+fn missing_message(tools: Tools) -> String {
     let mut missing = Vec::new();
-    if !have_ytdlp {
+    if !tools.ytdlp {
         missing.push("yt-dlp");
     }
-    if !have_ffmpeg {
+    if !tools.js {
+        missing.push("a JavaScript runtime (QuickJS, deno or node)");
+    }
+    if !tools.ffmpeg {
         missing.push("ffmpeg");
     }
 
     let hint = if cfg!(windows) {
-        "Install with: winget install yt-dlp.yt-dlp  and  winget install Gyan.FFmpeg \
-         (then reopen the app so PATH refreshes)."
+        "Open IDM Replica and let it finish \"Setting up components\" \
+         (Video components → Install); nothing has to be installed by hand."
     } else if cfg!(target_os = "macos") {
-        "Install with: brew install yt-dlp ffmpeg."
+        "Install with: brew install yt-dlp ffmpeg deno."
     } else {
         "Install via your package manager, e.g. on Debian/Ubuntu: \
-         sudo apt install ffmpeg  and grab yt-dlp from https://github.com/yt-dlp/yt-dlp."
+         sudo apt install ffmpeg nodejs  and grab yt-dlp from https://github.com/yt-dlp/yt-dlp."
     };
 
     format!(
         "Missing required tool(s) for video downloads: {}. {}",
-        missing.join(" and "),
+        missing.join(", "),
         hint
     )
 }
@@ -330,6 +374,8 @@ async fn run_yt_dlp(
 ) -> Result<String> {
     let mut cmd = process::command(program);
     cmd.args(["--no-warnings", "--no-playlist", "-J", "-f", YT_DLP_FORMAT]);
+    // Our own JS runtime / ffmpeg, so nothing has to be on PATH.
+    cmd.args(components::yt_dlp_args());
     for (k, v) in headers {
         cmd.arg("--add-header")
             .arg(format!("{}:{}", k.trim(), v.trim()));
@@ -498,6 +544,38 @@ mod tests {
         ] {
             assert!(!is_stream_site(url), "should NOT detect {url}");
         }
+    }
+
+    #[test]
+    fn preflight_reports_the_first_missing_tool() {
+        let t = |ytdlp, js, ffmpeg| Tools { ytdlp, js, ffmpeg };
+        assert_eq!(t(true, true, true).first_missing(), None);
+        assert_eq!(
+            t(false, false, false).first_missing(),
+            Some(MissingTool::YtDlp)
+        );
+        assert_eq!(
+            t(true, false, false).first_missing(),
+            Some(MissingTool::JsRuntime)
+        );
+        assert_eq!(
+            t(true, false, true).first_missing(),
+            Some(MissingTool::JsRuntime)
+        );
+        assert_eq!(
+            t(true, true, false).first_missing(),
+            Some(MissingTool::Ffmpeg)
+        );
+
+        // The message names everything that is missing, and only that.
+        let m = missing_message(t(true, false, true));
+        assert!(m.contains("JavaScript runtime"), "{m}");
+        assert!(!m.contains("yt-dlp,") && !m.contains("ffmpeg."), "{m}");
+        let m = missing_message(t(false, false, false));
+        assert!(
+            m.contains("yt-dlp, a JavaScript runtime (QuickJS, deno or node), ffmpeg."),
+            "{m}"
+        );
     }
 
     const SAMPLE_JSON: &str = r#"{
