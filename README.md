@@ -5,6 +5,66 @@ A cross-platform download manager (an "IDM killer") built with **Rust + Tokio**
 **Dynamic File Segmentation**, plus a YouTube dual-stream + FFmpeg muxing
 pipeline.
 
+## Install (Windows 10/11, 64-bit)
+
+Download one installer (and `SHA256SUMS.txt`) from the CI artifacts / release page:
+
+| Installer | Size | Use it when |
+|---|---|---|
+| `IDM-Replica-<version>-x64-lite-setup.exe` | ~1.7 MB | Normal case. On first run the app downloads yt-dlp, QuickJS and FFmpeg (~97 MB) and checks their SHA-256 before using them. |
+| `IDM-Replica-<version>-x64-full-setup.exe` | ~66 MB | Offline PCs: the same tools are inside the installer. They move to the app's components folder on first run, so yt-dlp still updates itself. |
+
+- Double-click; no admin rights needed (installs for your user in
+  `%LOCALAPPDATA%\IDM Replica`). Start menu shortcut; desktop shortcut optional.
+- Needs Microsoft Edge WebView2 (built into Windows 11 and updated Windows 10). If it is
+  missing, the installer downloads Microsoft's small bootstrapper and installs it.
+- Then add the browser extension: the installer's last page and the app's first-run
+  screen offer the store pages (once published) or **Manual install (developer mode)**.
+  Browsers only install extensions you approve; nothing is installed behind your back.
+- Uninstall from Settings → Apps. You can choose to also delete the download history,
+  settings and downloaded video tools. Your downloaded files are never deleted.
+
+Check a download: `Get-FileHash .\IDM-Replica-*-setup.exe` and compare with `SHA256SUMS.txt`.
+
+### FAQ
+
+**Windows says "Windows protected your PC" / my antivirus warns.** The installers are not
+code-signed yet (see `docs/SIGNING.md`), so SmartScreen doesn't know them. Click **More
+info → Run anyway** after checking the SHA-256 against `SHA256SUMS.txt`. Some antivirus
+products flag new unsigned download managers, and yt-dlp, heuristically. Report false
+positives to the vendor; don't turn your antivirus off.
+
+**The extension says IDM Replica isn't running / doesn't detect the app.** The app must be
+running (it can be in the tray: closing the window keeps it running). Then: click the
+extension's icon → **Connect to IDM Replica** → **Allow** in the app. If it still fails:
+the app's *Browser integration* section shows the port it listens on (38917 by default)
+and the extension's Options must use the same port; another program may hold that port.
+A store-installed extension has a different ID than the developer build — if it isn't
+in the app's allowed list yet, paste its ID under Browser integration → Advanced.
+
+**YouTube stopped working.** Sites change; yt-dlp follows. The app checks for a new yt-dlp
+once a day and after a failed extraction. To force it: *Video components* → **Check
+now**. If that says it's up to date, try again in a day.
+
+**Where are my settings and history?** `%APPDATA%\com.idmreplica.app` (history, settings,
+bridge token) and `%LOCALAPPDATA%\com.idmreplica.app\components` (video tools).
+
+## Building the installers
+
+```powershell
+npm ci; npm --prefix extension ci
+powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1 -Variant lite
+powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1 -Variant full   # fetches + verifies the pinned tools
+powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1 -Installer release\IDM-Replica-0.1.0-x64-lite-setup.exe
+```
+
+Outputs go to `release\` with `SHA256SUMS.txt`. Tauri v1 NSIS (per-user), with the
+template in `src-tauri/installer/installer.nsi` (Tauri's own, plus the extension page and
+a cleaner uninstall). CI (`.github/workflows/ci.yml`) runs every test, builds both and
+uploads them as artifacts; it never publishes. Store kit for the extension:
+`extension/store/`. Signing: `docs/SIGNING.md`. Manual test plan:
+`docs/CLEAN_INSTALL_TEST.md`.
+
 ## Features
 
 - **Dynamic File Segmentation** — `HEAD` probe → pre-allocate → spawn `N` ranged
@@ -67,11 +127,8 @@ F:\IDM_replica
 - **Tauri system deps** — see https://tauri.app/v1/guides/getting-started/prerequisites
   (on Windows: WebView2, already present on Win 11; the MSVC build tools).
 - **Tauri CLI:** `npm i -g @tauri-apps/cli` (or use the dev-dependency via `npx`).
-- **Runtime extras for YouTube** (optional, only for stream-site URLs):
-  - [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on `PATH`
-  - [`ffmpeg`](https://ffmpeg.org/download.html) on `PATH`
-  - The app detects their absence and returns a clear error for plain file
-    downloads it isn't needed.
+- **Video tools** (yt-dlp, QuickJS, FFmpeg): nothing to install by hand — the app's
+  component manager downloads the pinned, hash-checked versions (see *Components*).
 
 ## Setup & run
 
@@ -261,8 +318,10 @@ Error codes (every error is `{ok:false, code, message}`, plus `error` with the s
 | `internal` | 500 | anything else |
 
 The extension IDs in `bridge::shipped_extension_ids()` are always allowed: the development
-build's fixed ID, plus `WEB_STORE_EXTENSION_ID` (a placeholder until the extension is
-published). The settings field only adds IDs for custom builds.
+build's fixed ID (also the unpacked copy the installer ships), plus the Chrome Web Store
+and Edge Add-ons IDs from `src-tauri/extension-store.json` (both `null` until the extension
+is published; the stores assign their own IDs — see `extension/store/README.md`). The
+settings field only adds IDs for custom builds.
 
 Only one copy of the app runs at a time. A second launch focuses the existing window,
 hands over any `http(s)` URL it was given (as a confirm card), and exits. As a second

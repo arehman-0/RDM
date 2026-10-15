@@ -61,7 +61,11 @@ exists in this repo.
 | `src-tauri/src/app_settings.rs` | `settings.json` + the "Start with Windows" HKCU Run value. |
 | `src-tauri/src/queue.rs` / `history.rs` | Queue (cap, schedule, priority) / persisted download list + restore. |
 | `src/App.tsx` | Dashboard: commands + event listeners + per-thread bars. |
-| `extension/` | Chrome extension (MV3); `src/lib/messages.ts` maps bridge error codes to text. |
+| `src-tauri/src/browser_ext.rs` | Extension setup: store config (`src-tauri/extension-store.json`, the single place for store IDs/URLs), browser detection, opening store / extensions pages. |
+| `src-tauri/installer/installer.nsi` | NSIS template (Tauri v1's, plus the extension page and the cleaner uninstall; changes marked `IDM:`). |
+| `scripts/build-installer.ps1` | One command per installer variant (`-Variant lite|full`) → `release\` + `SHA256SUMS.txt`. |
+| `scripts/fetch-components.ps1` / `smoke-test.ps1` | Pinned tools for FULL (SHA-256 checked) / install-run-uninstall test. |
+| `extension/` | Chrome extension (MV3); `src/lib/messages.ts` maps bridge error codes to text; `store/` = Web Store kit. |
 | `scripts/bench-download.mjs` | 500 MB local throughput benchmark through the release exe + bridge. |
 | `scripts/gen-third-party-notices.mjs` | Regenerates `THIRD_PARTY_NOTICES.md`. |
 

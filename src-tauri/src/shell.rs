@@ -16,6 +16,7 @@ use tauri::{
 
 use crate::app_settings::{apply_autostart, AppSettings, HkcuRunKey};
 use crate::bridge::{Bridge, PairingPrompt};
+use crate::browser_ext;
 use crate::components::{
     ComponentEvents, ComponentProgress, ComponentStatus, Components, UpdateOutcome,
 };
@@ -185,6 +186,48 @@ pub fn set_app_settings(
         let mut s = lock(&shell.settings);
         s.start_with_windows = settings.start_with_windows;
         s.start_minimized = settings.start_minimized;
+        s.clone()
+    };
+    updated.save(&shell.settings_path)?;
+    Ok(updated)
+}
+
+// ---------------------------------------------------------------------------
+// Browser extension setup
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn extension_setup_info() -> browser_ext::SetupInfo {
+    browser_ext::setup_info()
+}
+
+/// "Open Chrome Web Store page" / "Open Edge Add-ons page".
+#[tauri::command]
+pub fn open_extension_store(store: browser_ext::Store) -> Result<(), String> {
+    browser_ext::open_store(store)
+}
+
+/// Manual install: `chrome://extensions` (or Edge's / Brave's).
+#[tauri::command]
+pub fn open_browser_extensions_page(browser: browser_ext::Browser) -> Result<(), String> {
+    browser_ext::open_extensions_page(browser)
+}
+
+/// Manual install: show the unpacked extension folder.
+#[tauri::command]
+pub fn reveal_unpacked_extension() -> Result<(), String> {
+    browser_ext::reveal_unpacked()
+}
+
+/// The extension step was finished or skipped (`done`), or reopened.
+#[tauri::command]
+pub fn set_extension_setup_done(
+    shell: State<'_, ShellState>,
+    done: bool,
+) -> Result<AppSettings, String> {
+    let updated = {
+        let mut s = lock(&shell.settings);
+        s.extension_setup_done = done;
         s.clone()
     };
     updated.save(&shell.settings_path)?;

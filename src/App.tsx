@@ -4,6 +4,7 @@ import { AddDownloadForm } from "./components/AddDownloadForm";
 import { BridgeRequests } from "./components/BridgeRequests";
 import { BrowserIntegrationPanel } from "./components/BrowserIntegrationPanel";
 import { ComponentsSetup } from "./components/ComponentsSetup";
+import { ExtensionSetup } from "./components/ExtensionSetup";
 import { ComponentsPanel, PairingPrompt, StartupPanel } from "./components/ShellPanels";
 import type { CardCommand } from "./components/DownloadCard";
 import { DownloadList } from "./components/DownloadList";
@@ -49,7 +50,7 @@ export default function App() {
   const [toast, flash] = useToast();
   const bridge = useBridge();
   const components = useComponents();
-  const [appSettings, saveAppSettings] = useAppSettings(flash);
+  const [appSettings, saveAppSettings, setExtensionDone] = useAppSettings(flash);
   const pairing = usePairing();
   // The setup screen can be put aside; "Install missing components" brings it back.
   const [setupSkipped, setSetupSkipped] = useState(false);
@@ -106,7 +107,11 @@ export default function App() {
           invoke("install_components").catch(() => {});
         }}
       />
-      <StartupPanel settings={appSettings} onChange={saveAppSettings} />
+      <StartupPanel
+        settings={appSettings}
+        onChange={saveAppSettings}
+        onExtensionSetup={() => setExtensionDone(false)}
+      />
       <BridgeRequests pending={bridge.pending} flash={flash} />
       <DownloadList cards={cards} onCommand={onCommand} onClearCompleted={clearCompleted} />
       <LogPanel />
@@ -117,6 +122,12 @@ export default function App() {
           onSkip={() => setSetupSkipped(true)}
         />
       )}
+      {/* First run, after the components screen: the extension step. */}
+      {appSettings &&
+        !appSettings.extensionSetupDone &&
+        !(components.info && needsSetup(components.info, setupSkipped)) && (
+          <ExtensionSetup onDone={() => setExtensionDone(true)} flash={flash} />
+        )}
       <PairingPrompt prompt={pairing} />
       {toast && <div className="toast">{toast}</div>}
     </div>

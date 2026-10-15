@@ -4,138 +4,130 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
 
-# Least privilege: the workflow only reads the repo.
+# Least privilege: the workflow only reads the repo. It never publishes a release.
 permissions:
   contents: read
 
-# Cancel superseded runs on the same ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  # The toolchain the release was verified with (Cargo.toml rust-version is the minimum).
+  RUST_TOOLCHAIN: "1.99.0"
+  NODE_VERSION: "22"
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Fast lint/typecheck/test gate (Linux only — cheap, runs first).
+  # Linux: keeps the cfg(unix) code paths compiling and tested.
   # ---------------------------------------------------------------------------
-  lint-test:
-    name: fmt · clippy · test · tsc
+  unix-check:
+    name: Linux · clippy · test (cfg(unix) paths)
     # Pinned: Tauri v1 needs libwebkit2gtk-4.0, which Ubuntu 24.04+ no longer ships.
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-
       - name: Install Linux webkit deps (Tauri v1)
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.0-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+          sudo apt-get install -y libwebkit2gtk-4.0-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
-
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      # `npm ci` fails on lockfile drift instead of silently re-resolving.
-      - name: Install npm deps
-        run: npm ci
-
-      - name: Frontend typecheck
-        run: npx tsc --noEmit
-
-      - name: Frontend unit tests
-        run: npm test
-
-      - name: Rust format check
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
-
-      # --locked: fail if Cargo.lock is missing or out of date.
-      - name: Rust clippy
-        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-
-      - name: Rust tests
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+          workspaces: src-tauri
+      - run: npm ci
+      # generate_context! needs dist/ to exist.
+      - run: npm run build
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
   # ---------------------------------------------------------------------------
-  # Cross-platform release-bundle build matrix (only if the gate passes).
+  # Windows: every test, then both installers + SHA256SUMS.txt as artifacts.
   # ---------------------------------------------------------------------------
-  build:
-    name: build (${{ matrix.os }})
-    needs: lint-test
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-22.04]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+  windows:
+    name: Windows · tests · installers (lite + full)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Linux webkit deps (Tauri v1)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.0-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: dtolnay/rust-toolchain@master
         with:
-          node-version: 20
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
-
-      - name: Cache cargo
+          cache-dependency-path: |
+            package-lock.json
+            extension/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Cache pinned components (verified again on every run)
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-build-
+          path: src-tauri/target/component-cache
+          key: components-${{ hashFiles('src-tauri/components.json') }}
 
-      - name: Install npm deps
-        run: npm ci
+      - name: Versions aligned
+        run: node scripts/check-versions.mjs
+      - name: npm ci (app + extension)
+        run: |
+          npm ci
+          npm --prefix extension ci
+      - name: Frontend typecheck + tests
+        run: |
+          npx tsc --noEmit
+          npm test
+      - name: Extension typecheck + tests + build
+        run: |
+          npm --prefix extension run typecheck
+          npm --prefix extension test
+          npm --prefix extension run build
+      - name: Rust fmt + clippy + tests
+        run: |
+          npm run build
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
 
-      - name: Build Tauri bundle
-        run: npm run tauri build
+      # Signing stays off: no secrets are needed for the unsigned build.
+      # See docs/SIGNING.md to turn it on (IDM_SIGN=1 + a certificate).
+      - name: Build LITE installer
+        run: ./scripts/build-installer.ps1 -Variant lite
+      - name: Build FULL installer
+        run: ./scripts/build-installer.ps1 -Variant full
+      - name: Store zip for the extension
+        run: npm --prefix extension run store:zip
 
-      - name: Upload bundles
+      - name: Smoke test (install → run → uninstall)
+        # Downloads the components in the LITE case (network needed).
+        run: |
+          ./scripts/smoke-test.ps1 -Installer (Get-Item release/*-lite-setup.exe).FullName
+          ./scripts/smoke-test.ps1 -Installer (Get-Item release/*-full-setup.exe).FullName
+
+      - name: Upload installers + checksums
         uses: actions/upload-artifact@v4
         with:
-          name: bundle-${{ matrix.os }}
-          path: src-tauri/target/release/bundle/
-          if-no-files-found: warn
+          name: idm-replica-windows-installers
+          path: |
+            release/*-setup.exe
+            release/SHA256SUMS.txt
+            extension/store/out/*.zip
+          if-no-files-found: error

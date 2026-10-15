@@ -28,10 +28,14 @@ export function useComponents(): { info: ComponentsInfo | null; progress: Progre
   return { info, progress };
 }
 
-/** Start with Windows / start minimized. */
+/** Start with Windows / start minimized, and the extension step's flag. */
 export function useAppSettings(
   flash: (msg: string) => void
-): [AppSettings | null, (next: Pick<AppSettings, "startWithWindows" | "startMinimized">) => void] {
+): [
+  AppSettings | null,
+  (next: Pick<AppSettings, "startWithWindows" | "startMinimized">) => void,
+  (done: boolean) => void,
+] {
   const [settings, setSettings] = useState<AppSettings | null>(null);
 
   useEffect(() => {
@@ -49,7 +53,16 @@ export function useAppSettings(
     [flash]
   );
 
-  return [settings, save];
+  const setExtensionDone = useCallback(
+    (done: boolean) => {
+      invoke<AppSettings>("set_extension_setup_done", { done }).then(setSettings, (e) =>
+        flash(String(e))
+      );
+    },
+    [flash]
+  );
+
+  return [settings, save, setExtensionDone];
 }
 
 /** The "Allow this extension?" prompt, mirrored from the backend. */

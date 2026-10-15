@@ -92,9 +92,11 @@ export function ComponentsPanel({
 export function StartupPanel({
   settings,
   onChange,
+  onExtensionSetup,
 }: {
   settings: AppSettings | null;
   onChange: (next: Pick<AppSettings, "startWithWindows" | "startMinimized">) => void;
+  onExtensionSetup: () => void;
 }) {
   if (!settings) return null;
   return (
@@ -123,6 +125,9 @@ export function StartupPanel({
       <span className="dim small">
         Closing the window keeps IDM Replica in the tray; use Quit in the tray menu to exit.
       </span>
+      <button className="linklike" onClick={onExtensionSetup}>
+        Install the browser extension…
+      </button>
     </section>
   );
 }

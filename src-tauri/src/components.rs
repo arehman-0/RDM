@@ -38,6 +38,12 @@ pub const UPDATE_INTERVAL_SECS: u64 = 24 * 60 * 60;
 /// A forced check (after an extraction failure) is still limited to this.
 pub const FORCED_UPDATE_MIN_SECS: u64 = 10 * 60;
 const SMOKE_TIMEOUT: Duration = Duration::from_secs(60);
+/// Download attempts per component before the setup screen shows an error.
+const FETCH_ATTEMPTS: u32 = 3;
+#[cfg(not(test))]
+const RETRY_DELAY: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const RETRY_DELAY: Duration = Duration::from_millis(10);
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -535,6 +541,60 @@ impl Components {
         });
     }
 
+    /// The FULL installer ships the tools in `<exe dir>/resources/components`.
+    /// On first run they are moved (or, across drives, copied) into the
+    /// per-user components dir, so the yt-dlp updater has a writable copy. A
+    /// single-file tool must match its pinned SHA-256; an archive tool
+    /// (FFmpeg: exe + DLLs) moves as a whole folder. Returns the adopted ids.
+    /// Blocking (file I/O and hashing): run it off the async runtime.
+    pub fn adopt_bundled(&self) -> Vec<String> {
+        let mut adopted = Vec::new();
+        for spec in &self.manifest.components {
+            let own = self.loc.components.join(&spec.id);
+            if own.join(&spec.exe).is_file() {
+                continue;
+            }
+            let Some(src) = self
+                .loc
+                .bundled
+                .iter()
+                .map(|d| d.join(&spec.id))
+                .find(|d| d.join(&spec.exe).is_file())
+            else {
+                continue;
+            };
+            if spec.archive.is_none() {
+                match sha256_file_blocking(&src.join(&spec.exe)) {
+                    Ok(h) if h.eq_ignore_ascii_case(&spec.sha256) => {}
+                    other => {
+                        warn!(component = %spec.id, ?other, "bundled copy does not match the pinned hash; not adopted");
+                        continue;
+                    }
+                }
+            }
+            match move_or_copy_dir(
+                &src,
+                &own,
+                &self.tmp_dir().join(format!("{}-adopt", spec.id)),
+            ) {
+                Ok(()) => {
+                    lock(&self.state)
+                        .installed
+                        .insert(spec.id.clone(), spec.version.clone());
+                    info!(component = %spec.id, "bundled component moved to the components dir");
+                    adopted.push(spec.id.clone());
+                }
+                Err(e) => {
+                    warn!(component = %spec.id, error = %e, "could not adopt the bundled component")
+                }
+            }
+        }
+        if !adopted.is_empty() {
+            self.save_state();
+        }
+        adopted
+    }
+
     /// Install every missing component (the first-run setup). Stops at the
     /// first failure; calling again resumes the interrupted download.
     pub async fn install_missing(&self) -> Result<(), ComponentError> {
@@ -554,7 +614,20 @@ impl Components {
         let part = self
             .tmp_dir()
             .join(format!("{}-{}.part", spec.id, &spec.sha256[..12]));
-        self.fetch(spec, &spec.url, &part, Some(spec.size)).await?;
+        // A dropped or stalled connection (30 s read timeout) is retried a few
+        // times, each attempt continuing the partial file with a Range request.
+        let mut attempt = 1;
+        loop {
+            match self.fetch(spec, &spec.url, &part, Some(spec.size)).await {
+                Ok(()) => break,
+                Err(ComponentError::Network(e)) if attempt < FETCH_ATTEMPTS => {
+                    warn!(component = %spec.id, attempt, "download interrupted, resuming: {e}");
+                    tokio::time::sleep(RETRY_DELAY * attempt).await;
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
         self.emit(spec, "verifying", spec.size, spec.size, None);
         verify(&part, &spec.sha256).await?;
         self.emit(spec, "installing", spec.size, spec.size, None);
@@ -872,27 +945,58 @@ fn swap_file(new: &Path, target: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-async fn sha256_file(path: PathBuf) -> std::io::Result<String> {
-    tokio::task::spawn_blocking(move || {
-        use std::io::Read;
-        let mut f = std::fs::File::open(&path)?;
-        let mut hasher = Sha256::new();
-        let mut buf = vec![0u8; 1 << 16];
-        loop {
-            let n = f.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buf[..n]);
+fn sha256_file_blocking(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
         }
-        Ok(hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect())
-    })
-    .await
-    .unwrap_or_else(|e| Err(std::io::Error::other(e)))
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
+async fn sha256_file(path: PathBuf) -> std::io::Result<String> {
+    tokio::task::spawn_blocking(move || sha256_file_blocking(&path))
+        .await
+        .unwrap_or_else(|e| Err(std::io::Error::other(e)))
+}
+
+/// Put folder `src` at `dest` (which must not exist): a rename when both are
+/// on one drive, else a copy through `staging` (then renamed into place, so
+/// `dest` never holds a half-copied folder; `src` is left as it was).
+fn move_or_copy_dir(src: &Path, dest: &Path, staging: &Path) -> std::io::Result<()> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if std::fs::rename(src, dest).is_ok() {
+        return Ok(());
+    }
+    let _ = std::fs::remove_dir_all(staging);
+    copy_dir(src, staging)?;
+    std::fs::rename(staging, dest)
+}
+
+fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let to = dest.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &to)?;
+        } else {
+            std::fs::copy(entry.path(), to)?;
+        }
+    }
+    Ok(())
 }
 
 /// Check `part` against `expected`; a wrong file is deleted on the spot.
@@ -1011,15 +1115,14 @@ mod tests {
     use axum::response::{IntoResponse, Response};
     use axum::routing::get;
     use axum::Router;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     /// A tiny range-capable file server that records `Range` headers and can
-    /// cut one response in half (a dropped connection).
+    /// cut the next `cuts` responses in half (a dropped connection).
     #[derive(Clone, Default)]
     struct Srv {
         files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
         ranges: Arc<Mutex<Vec<String>>>,
-        cut_next: Arc<AtomicBool>,
+        cuts: Arc<Mutex<usize>>,
     }
 
     async fn serve(
@@ -1052,7 +1155,13 @@ mod tests {
             StatusCode::OK
         };
         let rest = data[start..].to_vec();
-        if s.cut_next.swap(false, Ordering::SeqCst) {
+        let cut = {
+            let mut n = lock(&s.cuts);
+            let cut = *n > 0;
+            *n = n.saturating_sub(1);
+            cut
+        };
+        if cut {
             let half = rest[..rest.len() / 2].to_vec();
             // Deliver half, give the client time to read it, then drop.
             let stream = futures_util::stream::unfold(0u8, move |step| {
@@ -1219,6 +1328,52 @@ mod tests {
     }
 
     #[test]
+    fn bundled_tools_are_adopted_only_when_they_match_the_pin() {
+        let root = temp_dir("comp_adopt");
+        let good = script(Some("1.0"));
+        let m = manifest_for("http://127.0.0.1:1", "x", &sha(&good), good.len());
+        let c = manager(m.clone(), &root);
+        let bundled = root.join("bundled").join("yt-dlp");
+        std::fs::create_dir_all(&bundled).unwrap();
+
+        // A tampered copy is left alone (the resolver still sees it as bundled).
+        std::fs::write(bundled.join(TOOL_EXE), b"tampered").unwrap();
+        assert!(c.adopt_bundled().is_empty());
+        assert_eq!(c.resolve(Tool::YtDlp).unwrap().source, Source::Bundled);
+
+        // The pinned copy moves into the writable components dir, once.
+        std::fs::write(bundled.join(TOOL_EXE), &good).unwrap();
+        assert_eq!(c.adopt_bundled(), ["yt-dlp"]);
+        let own = root.join("components").join("yt-dlp").join(TOOL_EXE);
+        assert_eq!(std::fs::read(&own).unwrap(), good);
+        assert_eq!(c.resolve(Tool::YtDlp).unwrap().source, Source::Components);
+        assert!(c.adopt_bundled().is_empty());
+        let status = c.status();
+        assert_eq!(status[0].installed_version.as_deref(), Some("1.0"));
+        // Recorded on disk too.
+        let c2 = manager(m, &root);
+        assert_eq!(c2.status()[0].installed_version.as_deref(), Some("1.0"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_copy_fallback_is_complete() {
+        let root = temp_dir("comp_copydir");
+        let src = root.join("src");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("a.exe"), b"a").unwrap();
+        std::fs::write(src.join("sub").join("b.dll"), b"b").unwrap();
+        let dest = root.join("dest");
+        copy_dir(&src, &dest).unwrap();
+        assert_eq!(std::fs::read(dest.join("sub").join("b.dll")).unwrap(), b"b");
+        // Same-drive case: a rename.
+        let moved = root.join("moved").join("x");
+        move_or_copy_dir(&src, &moved, &root.join("stage")).unwrap();
+        assert!(moved.join("a.exe").is_file() && !src.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn js_runtime_prefers_quickjs_then_deno_then_node() {
         let root = temp_dir("comp_js");
         let path = vec![root.join("a"), root.join("b")];
@@ -1331,18 +1486,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn one_dropped_connection_is_resumed_automatically() {
+        let root = temp_dir("comp_autoresume");
+        let data: Vec<u8> = (0..200_000u32).map(|i| (i % 241) as u8).collect();
+        let srv = Srv::default();
+        lock(&srv.files).insert("tool".into(), data.clone());
+        *lock(&srv.cuts) = 1;
+        let base = start(srv.clone()).await;
+        let c = manager(manifest_for(&base, "tool", &sha(&data), data.len()), &root);
+
+        c.install_missing().await.unwrap();
+        let ranges = lock(&srv.ranges).clone();
+        assert_eq!(ranges.len(), 1, "{ranges:?}");
+        assert_ne!(ranges[0], "bytes=0-", "must continue, not restart");
+        assert_eq!(
+            std::fs::read(c.resolve(Tool::YtDlp).unwrap().path).unwrap(),
+            data
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn interrupted_download_resumes_with_a_range_request() {
         let root = temp_dir("comp_resume");
         let data: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
         let srv = Srv::default();
         lock(&srv.files).insert("tool".into(), data.clone());
-        srv.cut_next.store(true, Ordering::SeqCst);
+        // Every automatic attempt is cut: the setup gives up with an error.
+        *lock(&srv.cuts) = FETCH_ATTEMPTS as usize;
         let base = start(srv.clone()).await;
         let c = manager(manifest_for(&base, "tool", &sha(&data), data.len()), &root);
 
         let e = c.install_missing().await.unwrap_err();
         assert!(matches!(e, ComponentError::Network(_)), "{e:?}");
         assert!(c.resolve(Tool::YtDlp).is_none());
+        // Attempts 2 and 3 already resumed with a Range request.
+        assert_eq!(lock(&srv.ranges).len(), FETCH_ATTEMPTS as usize - 1);
         let part = std::fs::read_dir(root.join("components").join(".tmp"))
             .unwrap()
             .flatten()
@@ -1351,8 +1530,9 @@ mod tests {
             .path();
         let have = std::fs::metadata(&part).unwrap().len();
         assert!(have > 0 && have < data.len() as u64, "partial = {have}");
+        lock(&srv.ranges).clear();
 
-        // Retry: continues from the partial file instead of starting over.
+        // Retry (the user's button): continues from the partial file.
         c.install_missing().await.unwrap();
         assert_eq!(lock(&srv.ranges).as_slice(), [format!("bytes={have}-")]);
         assert_eq!(
