@@ -10,3 +10,9 @@ src-tauri/target/
 .idea/
 .vscode/
 *.log
+
+# Installer build (scripts/build-installer.ps1): staged resources, downloaded
+# binaries and finished installers are never committed.
+src-tauri/resources/
+release/
+extension/store/out/

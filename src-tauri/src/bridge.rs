@@ -78,16 +78,15 @@ const PAIR_WINDOW: Duration = Duration::from_secs(60);
 const PAIR_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Extension IDs that ship allowed, so nobody has to type one: the
-/// development build (its ID is fixed by the `key` in the extension's
-/// manifest) and, once published, the Chrome Web Store ID.
+/// development / unpacked build (its ID is fixed by the `key` in the
+/// extension's manifest) and, once published, the IDs the Chrome Web Store
+/// and Edge Add-ons assign — set those in `src-tauri/extension-store.json`.
 pub const DEV_EXTENSION_ID: &str = "pcmcmknffhfehgpkoedecnabbphgnabg";
-/// PLACEHOLDER: set to the 32-letter Web Store ID when the extension is published.
-pub const WEB_STORE_EXTENSION_ID: Option<&str> = None;
 
 /// The IDs allowed out of the box (settings can add more under Advanced).
 pub fn shipped_extension_ids() -> Vec<&'static str> {
     std::iter::once(DEV_EXTENSION_ID)
-        .chain(WEB_STORE_EXTENSION_ID)
+        .chain(crate::browser_ext::StoreConfig::embedded().store_ids())
         .collect()
 }
 const MAX_BATCH: usize = 100;

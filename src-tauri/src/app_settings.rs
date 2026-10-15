@@ -2,7 +2,7 @@
 //! "Start with Windows" entry. No Tauri here.
 //!
 //! Autostart is a per-user value under
-//! `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — never HKLM, so it
+//! `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` â€” never HKLM, so it
 //! needs no elevation and affects only this user. Turning it off deletes the
 //! value. The registry is reached through [`RunKey`], so the logic is tested
 //! with an in-memory fake.
@@ -28,6 +28,8 @@ pub struct AppSettings {
     pub start_minimized: bool,
     /// The "still running in the tray" explanation was shown once.
     pub tray_notice_shown: bool,
+    /// The "Install the browser extension" step was finished or skipped.
+    pub extension_setup_done: bool,
 }
 
 impl AppSettings {
@@ -230,6 +232,7 @@ mod tests {
             start_with_windows: true,
             start_minimized: true,
             tray_notice_shown: true,
+            extension_setup_done: true,
         };
         changed.save(&path).unwrap();
         assert_eq!(AppSettings::load(&path), changed);

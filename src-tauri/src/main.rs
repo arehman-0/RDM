@@ -3,6 +3,7 @@
 
 mod app_settings;
 mod bridge;
+mod browser_ext;
 mod components;
 mod downloader;
 mod history;
@@ -1241,6 +1242,11 @@ fn main() {
             shell::set_app_settings,
             shell::get_pending_pairing,
             shell::answer_pairing,
+            shell::extension_setup_info,
+            shell::open_extension_store,
+            shell::open_browser_extensions_page,
+            shell::reveal_unpacked_extension,
+            shell::set_extension_setup_done,
         ])
         .setup(move |app| {
             let handle = app.handle();
@@ -1264,6 +1270,9 @@ fn main() {
                 Arc::new(shell::TauriComponentEvents { app: app.handle() }),
             ));
             components::set_global(components.clone());
+            // FULL installer: move the shipped tools somewhere updatable.
+            let adopt = components.clone();
+            tauri::async_runtime::spawn_blocking(move || adopt.adopt_bundled());
             let needs_setup = !components.missing().is_empty();
             app.manage(shell::ShellState {
                 components,

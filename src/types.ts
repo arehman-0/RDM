@@ -227,6 +227,7 @@ export interface AppSettings {
   startWithWindows: boolean;
   startMinimized: boolean;
   trayNoticeShown: boolean;
+  extensionSetupDone: boolean;
 }
 
 /** `pairing-request` event / `get_pending_pairing`. */
@@ -234,4 +235,22 @@ export interface PairingPrompt {
   id: string;
   extensionId: string;
   browser: string;
+}
+
+/** `extension_setup_info`: what the "Install the browser extension" step shows. */
+export type BrowserId = "chrome" | "edge" | "brave";
+
+export interface InstalledBrowser {
+  id: BrowserId;
+  name: string;
+  path: string;
+}
+
+export interface ExtensionSetupInfo {
+  browsers: InstalledBrowser[];
+  /** `null` until the extension is published there. */
+  chromeWebStoreUrl: string | null;
+  edgeAddonsUrl: string | null;
+  /** The unpacked extension shipped with the installer, if present. */
+  unpackedDir: string | null;
 }

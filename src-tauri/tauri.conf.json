@@ -36,8 +36,25 @@
     },
     "bundle": {
       "active": true,
-      "targets": "all",
+      "targets": ["nsis"],
       "identifier": "com.idmreplica.app",
+      "publisher": "Abdul Rehman",
+      "copyright": "Copyright (c) 2026 Abdul Rehman. MIT License.",
+      "category": "Utility",
+      "shortDescription": "Download manager with dynamic segmentation",
+      "longDescription": "IDM Replica downloads files with many connections at once, resumes after interruptions, takes over downloads from Chrome and Edge through its extension, and saves videos from YouTube and other sites.",
+      "windows": {
+        "webviewInstallMode": {
+          "type": "downloadBootstrapper",
+          "silent": true
+        },
+        "nsis": {
+          "installMode": "currentUser",
+          "installerIcon": "icons/icon.ico",
+          "languages": ["English"],
+          "displayLanguageSelector": false
+        }
+      },
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",

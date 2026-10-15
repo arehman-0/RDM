@@ -45,6 +45,17 @@
    - Setting *Confirm browser take-over downloads* (default off).
 
 ## Needs decision (not started)
+- **App auto-update (evaluated 2026-10-15, not enabled).** Tauri v1's updater needs: the
+  `updater` cargo feature (pulls in minisign signature checking and its own update
+  download/install code; the exe size cost was not measured), a signing keypair
+  (`tauri signer generate`; the private key + password become CI secrets), a hosted JSON
+  endpoint (e.g. a static `latest.json` on GitHub Releases or Pages) and, per release, the
+  extra `*.nsis.zip` + `.sig` artifacts. On Windows it runs the new NSIS installer in
+  passive mode. That is a hosting decision, two new secrets and a release process, so it
+  stays off. Proposal: (a) keep it off and show "a newer version is available" by
+  comparing with the GitHub releases API (small, no keys, but still a network call to
+  decide); or (b) enable the Tauri updater once releases are published and signing is
+  set up. Note that yt-dlp already updates itself; the app rarely *must* update.
 - **UI defaults for browser downloads** (old item 6): browser jobs still use the suggested
   connections, the OS Downloads folder and no speed cap, because the UI's sliders live
   only in React.
