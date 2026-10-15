@@ -56,6 +56,4 @@ App exe grew 5.15 → 5.23 MB (extension setup + component adoption code).
 - App auto-update: off; proposal in `NOTES_extension.md`.
 - FULL moves (not copies) the tools out of the install folder to avoid 2× disk use.
 - Still open: custom FFmpeg build; tray test hook in release; manifest jobs skip JS check.
-
-## Next step
-Run `docs/CLEAN_INSTALL_TEST.md` in Windows Sandbox, decide name/signing, then publish.
+**Next step:** run `docs/CLEAN_INSTALL_TEST.md` in Windows Sandbox, decide name/signing.
