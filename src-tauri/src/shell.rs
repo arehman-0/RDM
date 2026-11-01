@@ -269,6 +269,56 @@ pub fn tray() -> SystemTray {
         .with_tooltip("IDM Replica")
 }
 
+// ---------------------------------------------------------------------------
+// "Download request" popup
+// ---------------------------------------------------------------------------
+
+/// The popup that asks Start / Reject for browser downloads waiting for
+/// confirmation (the main window keeps its cards as a backup).
+pub const CONFIRM_WINDOW: &str = "confirm";
+
+/// Open the popup, or bring it back to the front if it is already open.
+/// It is always on top and focused, so it is seen even with the main window
+/// hidden in the tray. Call from any thread but the UI thread (Tauri v1
+/// builds windows by messaging that thread).
+pub fn show_confirm_window(app: &AppHandle) {
+    if let Some(w) = app.get_window(CONFIRM_WINDOW) {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_always_on_top(true);
+        let _ = w.set_focus();
+        return;
+    }
+    let built = tauri::WindowBuilder::new(
+        app,
+        CONFIRM_WINDOW,
+        // The same UI bundle; `#confirm` renders only the popup.
+        tauri::WindowUrl::App("index.html#confirm".into()),
+    )
+    .title("IDM Replica — Download request")
+    .inner_size(560.0, 340.0)
+    .min_inner_size(480.0, 300.0)
+    .resizable(true)
+    .center()
+    .always_on_top(true)
+    .focused(true)
+    .build();
+    if let Err(e) = built {
+        // Fall back to the main window's Accept / Dismiss cards.
+        tracing::warn!(error = %e, "could not open the download request window");
+        show_main(app);
+    }
+}
+
+/// The popup has nothing left to ask (it says so itself), or the user is done.
+#[tauri::command]
+pub fn close_confirm_window(app: AppHandle) {
+    if let Some(w) = app.get_window(CONFIRM_WINDOW) {
+        tracing::info!("download request window closed: nothing left to answer");
+        let _ = w.close();
+    }
+}
+
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_window("main") {
         let _ = w.show();

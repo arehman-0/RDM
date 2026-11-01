@@ -8,9 +8,15 @@ import { useTauriEvent } from "./useTauriEvent";
  * Browser-bridge state as a passive mirror: fetched once on mount, then kept
  * current by `bridge-status` / `bridge-request` / `bridge-request-removed`.
  */
-export function useBridge(): { info: BridgeInfo | null; pending: PendingRequest[] } {
+export function useBridge(): {
+  info: BridgeInfo | null;
+  pending: PendingRequest[];
+  /** The backlog has arrived (until then an empty list means "not known yet"). */
+  loaded: boolean;
+} {
   const [info, setInfo] = useState<BridgeInfo | null>(null);
   const [pending, setPending] = useState<PendingRequest[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     invoke<BridgeInfo>("get_bridge_info")
@@ -18,7 +24,8 @@ export function useBridge(): { info: BridgeInfo | null; pending: PendingRequest[
       .catch(() => {});
     invoke<PendingRequest[]>("list_bridge_requests")
       .then((backlog) => setPending((live) => mergePending(backlog, live)))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoaded(true));
   }, []);
 
   useTauriEvent<BridgeInfo>("bridge-status", setInfo);
@@ -27,5 +34,5 @@ export function useBridge(): { info: BridgeInfo | null; pending: PendingRequest[
     setPending((l) => removePending(l, id))
   );
 
-  return { info, pending };
+  return { info, pending, loaded };
 }

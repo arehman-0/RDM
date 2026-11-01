@@ -728,3 +728,54 @@ button.ghost:hover {
 .small {
   font-size: 12px;
 }
+
+/* "Download request" popup window (main.tsx renders it for #confirm). */
+.confirm-window {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+.confirm-window h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-dim, #9aa4b2);
+}
+.confirm-file {
+  font-size: 18px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.confirm-info {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+.confirm-info dt {
+  color: var(--text-dim, #9aa4b2);
+}
+.confirm-info dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: auto;
+}
+.confirm-actions button {
+  padding: 8px 18px;
+}
+.confirm-actions .spacer {
+  flex: 1;
+}

@@ -16,6 +16,38 @@ export function mergePending(backlog: PendingRequest[], live: PendingRequest[]):
   return live.reduce(addPending, backlog);
 }
 
+/** Why the browser sent it (empty for a plain click). */
+export const SOURCE_LABEL: Record<PendingRequest["source"], string> = {
+  takeover: "taken over from the browser",
+  "user-action": "",
+  "page-scan": "found on the page",
+  "command-line": "opened with IDM Replica",
+};
+
+/** `host` of a URL, or the text itself if it isn't one. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/** The popup's "File type" line. */
+export function requestType(r: PendingRequest): string {
+  if (r.kind === "stream") {
+    return r.quality && r.quality !== "best" ? `Video (${r.quality})` : "Video";
+  }
+  return r.mediaType ?? "File";
+}
+
+/** Keys in the popup: Enter starts, Escape rejects, anything else is ignored. */
+export function popupKeyAction(key: string): "start" | "reject" | null {
+  if (key === "Enter") return "start";
+  if (key === "Escape") return "reject";
+  return null;
+}
+
 /** Extension IDs typed one per line (or comma/space separated). */
 export function parseExtensionIds(text: string): string[] {
   return text

@@ -1000,6 +1000,8 @@ impl bridge::BridgeHost for TauriBridgeHost {
 
     fn pending_added(&self, req: &bridge::PendingRequest) {
         let _ = self.app.emit_all("bridge-request", req);
+        // Ask right away, in a popup above every other window.
+        shell::show_confirm_window(&self.app);
     }
 
     fn pending_removed(&self, id: &str) {
@@ -1194,10 +1196,14 @@ fn main() {
         .system_tray(shell::tray())
         .on_system_tray_event(shell::on_tray_event)
         .on_window_event(|event| {
-            // Closing the window keeps the app (and browser take-over) alive.
+            // Closing the main window keeps the app (and browser take-over)
+            // alive. The download-request popup really closes; its requests
+            // stay in the main window's list.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
-                api.prevent_close();
-                shell::hide_to_tray(event.window());
+                if event.window().label() == "main" {
+                    api.prevent_close();
+                    shell::hide_to_tray(event.window());
+                }
             }
         })
         .manage(AppState {
@@ -1242,6 +1248,7 @@ fn main() {
             shell::set_app_settings,
             shell::get_pending_pairing,
             shell::answer_pairing,
+            shell::close_confirm_window,
             shell::extension_setup_info,
             shell::open_extension_store,
             shell::open_browser_extensions_page,
