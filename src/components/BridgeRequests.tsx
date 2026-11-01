@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/tauri";
+import { hostOf, SOURCE_LABEL } from "../lib/bridge";
 import { fmtBytes } from "../lib/format";
 import type { PendingRequest } from "../types";
 
@@ -54,17 +55,3 @@ export function BridgeRequests({ pending, flash }: Props) {
   );
 }
 
-const SOURCE_LABEL: Record<PendingRequest["source"], string> = {
-  takeover: "taken over from Chrome",
-  "user-action": "",
-  "page-scan": "found on the page",
-  "command-line": "opened with IDM Replica",
-};
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}

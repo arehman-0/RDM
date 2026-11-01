@@ -3,9 +3,13 @@ import type { BridgeInfo, PendingRequest } from "../types";
 import {
   addPending,
   bridgeStatusLine,
+  hostOf,
   mergePending,
   parseExtensionIds,
+  popupKeyAction,
   removePending,
+  requestType,
+  SOURCE_LABEL,
 } from "./bridge";
 
 const req = (id: string): PendingRequest => ({
@@ -48,6 +52,30 @@ describe("pending requests", () => {
       "b",
       "c",
     ]);
+  });
+});
+
+describe("download request popup", () => {
+  it("names the type of request", () => {
+    expect(requestType(req("a"))).toBe("File");
+    expect(requestType({ ...req("a"), mediaType: "application/zip" })).toBe("application/zip");
+    expect(requestType({ ...req("a"), kind: "stream" })).toBe("Video");
+    expect(requestType({ ...req("a"), kind: "stream", quality: "best" })).toBe("Video");
+    expect(requestType({ ...req("a"), kind: "stream", quality: "720" })).toBe("Video (720)");
+  });
+
+  it("maps Enter to start and Escape to reject, nothing else", () => {
+    expect(popupKeyAction("Enter")).toBe("start");
+    expect(popupKeyAction("Escape")).toBe("reject");
+    expect(popupKeyAction("a")).toBeNull();
+    expect(popupKeyAction(" ")).toBeNull();
+  });
+
+  it("shows the site and why the browser sent it", () => {
+    expect(hostOf("https://cdn.example.com:8443/a.zip?x=1")).toBe("cdn.example.com:8443");
+    expect(hostOf("not a url")).toBe("not a url");
+    expect(SOURCE_LABEL["user-action"]).toBe("");
+    expect(SOURCE_LABEL.takeover).toContain("browser");
   });
 });
 

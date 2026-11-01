@@ -238,6 +238,16 @@ Browser bridge — events: `bridge-status` → `BridgeInfo`; `bridge-request` �
 `PendingRequest { id, status: "pending-confirm", url, pageUrl, fileName, kind, mediaType,
 size, headerNames, hasCookies, receivedAt }`; `bridge-request-removed` → `{ id }`.
 
+**Download request popup.** When a browser download needs confirmation (*Ask before
+starting browser downloads*, page-scan items, command-line URLs, or take-overs with
+*Confirm browser take-over downloads* on), the app opens a small always-on-top, focused
+window, **IDM Replica — Download request** (`index.html#confirm`, label `confirm`), even
+while the main window sits in the tray. It shows one request at a time (file name,
+address, site, type, size, cookies used) with **Start download** / **Reject** (Enter /
+Esc), plus **Start all** / **Reject all** when several are waiting. It closes itself when
+nothing is left (`close_confirm_window`). Closing it with X only closes the popup: the
+requests stay as cards in the main window. Take-overs that start at once never show it.
+
 ### Browser bridge HTTP API (for the extension)
 
 A localhost-only HTTP server inside the app (`127.0.0.1`, port **38917**, or the
