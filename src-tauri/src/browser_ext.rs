@@ -149,6 +149,7 @@ pub fn unpacked_dir() -> Option<PathBuf> {
 }
 
 /// The value of `(Default)` in `reg query <key> /ve` output.
+#[cfg(windows)]
 pub fn parse_reg_default(out: &str) -> Option<PathBuf> {
     out.lines().find_map(|l| {
         let (_, v) = l
@@ -314,6 +315,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn reg_default_value_parsing() {
         let out = "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\...\\chrome.exe\r\n    (Default)    REG_SZ    C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\r\n    Path    REG_SZ    C:\\x\r\n";
         assert_eq!(
