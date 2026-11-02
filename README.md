@@ -5,6 +5,13 @@ A cross-platform download manager (an "IDM killer") built with **Rust + Tokio**
 **Dynamic File Segmentation**, plus a YouTube dual-stream + FFmpeg muxing
 pipeline.
 
+## Development note
+
+Parts of the project documentation were created with help from local agents,
+including Qwen 3.5 9B, while Claude Sonnet 4.5 supervised the workflow through
+Claude Code. The temporary documentation files were removed after they were no
+longer needed.
+
 ## Install (Windows 10/11, 64-bit)
 
 Download one installer (and `SHA256SUMS.txt`) from the CI artifacts / release page:
