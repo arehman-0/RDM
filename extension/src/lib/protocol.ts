@@ -19,6 +19,8 @@ export interface DomMedia {
 
 export type Request =
   | { type: "dom-media"; items: DomMedia[] }
+  /** A playlist the page's player loaded (found by content, see lib/probe.ts). */
+  | { type: "player-manifest"; url: string; kind: "hls" | "dash"; master: boolean; frameUrl: string }
   | { type: "get-media"; tabId?: number }
   | { type: "download-item"; key: string; tabId?: number }
   | { type: "download-best"; pageUrl: string; src?: string | null; tabId?: number }

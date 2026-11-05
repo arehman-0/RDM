@@ -12,6 +12,7 @@ await build({
   entryPoints: {
     background: "src/background.ts",
     content: "src/content.ts",
+    "page-probe": "src/page-probe.ts",
     popup: "src/popup.ts",
     options: "src/options.ts",
   },

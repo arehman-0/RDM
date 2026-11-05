@@ -4,9 +4,9 @@
 // top level (required for the worker to be woken by events).
 
 import { checkConnection, describeConn, pair, sendBatch, sendDownload, type SendResult } from "./lib/bridge";
-import { guessFileName, guessQuality } from "./lib/filename";
+import { guessFileName, guessQuality, streamFileName } from "./lib/filename";
 import { bestItem, mergeItem, type MediaItem } from "./lib/items";
-import { normalizeUrl, toRecordable } from "./lib/media";
+import { isAdOrTracker, isHttpUrl, normalizeUrl, toRecordable } from "./lib/media";
 import { MSG } from "./lib/messages";
 import type { AllReply, ConnReply, DomMedia, MediaList, PairReply, Request, SettingsReply } from "./lib/protocol";
 import { buildPayload, targetForItem, type DownloadPayload, type SendTarget } from "./lib/request";
@@ -80,6 +80,14 @@ function clearTab(tabId: number): Promise<void> {
   });
 }
 
+async function tabTitle(tabId: number): Promise<string> {
+  try {
+    return (await chrome.tabs.get(tabId)).title ?? "";
+  } catch {
+    return "";
+  }
+}
+
 async function tabUrl(tabId: number): Promise<string> {
   try {
     return (await chrome.tabs.get(tabId)).url ?? "";
@@ -119,7 +127,10 @@ async function onHeaders(d: chrome.webRequest.WebResponseHeadersDetails): Promis
     url: rec.url,
     kind: rec.kind,
     source: "network",
-    fileName: guessFileName(rec.url, rec.kind, header(d.responseHeaders, "content-disposition")),
+    fileName:
+      rec.kind === "hls" || rec.kind === "dash"
+        ? streamFileName(await tabTitle(d.tabId), rec.url, rec.kind)
+        : guessFileName(rec.url, rec.kind, header(d.responseHeaders, "content-disposition")),
     mediaType: rec.mediaType,
     size: rec.size,
     quality: guessQuality(rec.url),
@@ -215,6 +226,40 @@ async function send(t: SendTarget): Promise<SendResult> {
   return sendDownload(s.port, s.token, built.payload, fetch, chrome.runtime.id);
 }
 
+/** A playlist the page's player loaded (reported by page-probe.ts). */
+async function onPlayerManifest(
+  tabId: number,
+  m: { url: string; kind: "hls" | "dash"; master: boolean; frameUrl: string }
+): Promise<void> {
+  if (!isHttpUrl(m.url) || isAdOrTracker(m.url) || isKnownSiteCdn(m.url)) return;
+  const top = await tabUrl(tabId);
+  // Known stream sites are resolved from the page URL by the app instead.
+  if (top && knownSiteFor(top)) return;
+  let norm: { key: string; cleanUrl: string };
+  try {
+    norm = normalizeUrl(m.url);
+  } catch {
+    return;
+  }
+  const item: MediaItem = {
+    key: norm.key,
+    url: norm.cleanUrl,
+    kind: m.kind,
+    source: "network",
+    fileName: streamFileName(await tabTitle(tabId), m.url, m.kind),
+    mediaType: m.kind === "hls" ? "application/vnd.apple.mpegurl" : "application/dash+xml",
+    size: null,
+    quality: m.master ? "all qualities" : guessQuality(m.url),
+    // The frame whose player loaded it: the Referer/Origin the CDN expects.
+    pageUrl: isHttpUrl(m.frameUrl) ? m.frameUrl : top,
+    drm: false,
+    seenAt: Date.now(),
+    master: m.master,
+    fromPlayer: true,
+  };
+  await updateTab(tabId, (l) => mergeItem(l, item));
+}
+
 function bestTarget(list: MediaItem[], pageUrl: string, src?: string | null): SendTarget | { error: string } {
   if (isKnownVideoPage(pageUrl)) {
     const drm = list.some((x) => x.drm && x.pageUrl === pageUrl);
@@ -226,7 +271,10 @@ function bestTarget(list: MediaItem[], pageUrl: string, src?: string | null): Se
   } catch {
     preferred = null;
   }
-  const best = bestItem(list, preferred);
+  // No file URL for the clicked video and the page has a blob:/MSE player:
+  // the stream's playlist is what's playing.
+  const blobPlayer = !src && list.some((x) => x.kind === "page");
+  const best = bestItem(list, preferred, blobPlayer);
   if (best) return targetForItem(best);
   if (list.some((x) => x.drm)) return { error: MSG.drm };
   return { error: list.some((x) => x.kind === "page") ? MSG.blobUnsupported : MSG.nothingFound };
@@ -278,6 +326,10 @@ async function handle(msg: Request, sender: chrome.runtime.MessageSender): Promi
       await updateTab(senderTab, (l) =>
         items.reduce(mergeItem, top ? l.filter((x) => x.source !== "page" || current.has(x.key)) : l)
       );
+      return null;
+    }
+    case "player-manifest": {
+      if (senderTab !== undefined) await onPlayerManifest(senderTab, msg);
       return null;
     }
     case "get-media": {

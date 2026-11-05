@@ -23,6 +23,8 @@ export interface DownloadPayload {
   quality?: string;
   /** Why it was sent: take-overs start at once, the rest follow "ask before starting". */
   source?: Source;
+  /** Extra request headers (for streams: the `Origin` the page's player sent). */
+  headers?: Record<string, string>;
 }
 
 export type Source = "takeover" | "user-action" | "page-scan";
@@ -114,6 +116,15 @@ export function resolveTarget(t: SendTarget): { url?: string; pageUrl?: string; 
   return { url: t.url, pageUrl: page, kind: t.kind };
 }
 
+function originOf(url: string): string | null {
+  try {
+    const o = new URL(url).origin;
+    return o === "null" ? null : o;
+  } catch {
+    return null;
+  }
+}
+
 export async function buildPayload(t: SendTarget, deps: RequestDeps): Promise<BuildResult> {
   const r = resolveTarget(t);
   if ("error" in r) return { ok: false, error: r.error };
@@ -136,6 +147,19 @@ export async function buildPayload(t: SendTarget, deps: RequestDeps): Promise<Bu
     source: t.source ?? "user-action",
   };
   if (r.kind === "stream" && t.quality) payload.quality = t.quality;
+  if (r.kind === "stream" && t.manifest && r.url) {
+    // A playlist from a page's player. Send it the way the player fetched it:
+    // a cross-origin request carries the page's Origin, and (browser default
+    // policy) only the page's origin as Referer. The media type tells the app
+    // it is a playlist even when the URL doesn't end in .m3u8 / .mpd.
+    const page = r.pageUrl ? originOf(r.pageUrl) : null;
+    if (page && page !== originOf(r.url)) {
+      payload.referer = `${page}/`;
+      payload.headers = { Origin: page };
+    }
+    if (t.mediaType) payload.mediaType = t.mediaType.slice(0, 128);
+    if (t.fileName) payload.fileName = t.fileName;
+  }
   if (r.kind !== "stream") {
     if (t.fileName) payload.fileName = t.fileName;
     if (t.mediaType) payload.mediaType = t.mediaType.slice(0, 128);
