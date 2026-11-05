@@ -178,6 +178,28 @@ pub struct StreamJob<'a> {
     pub quality: Quality,
     /// Extra yt-dlp options (our JS runtime and ffmpeg locations).
     pub extra_args: &'a [String],
+    /// File name to use instead of yt-dlp's title (a playlist from a page's
+    /// player is named after the page). Already passed `safe_file_name`.
+    pub name: Option<&'a str>,
+}
+
+/// yt-dlp's `-o` template for `name`: the extension yt-dlp picks replaces any
+/// given one, and `%` is escaped (it starts a template field).
+pub fn output_template(name: Option<&str>) -> String {
+    let stem = name.map(|n| {
+        let n = n.trim();
+        let lower = n.to_ascii_lowercase();
+        [".mp4", ".mkv", ".webm", ".m3u8", ".mpd", ".ts", ".m4a"]
+            .iter()
+            .find(|e| lower.ends_with(*e))
+            .map_or(n, |e| &n[..n.len() - e.len()])
+            .trim()
+            .replace('%', "%%")
+    });
+    match stem {
+        Some(s) if !s.is_empty() => format!("{s}.%(ext)s"),
+        _ => "%(title).120B.%(ext)s".into(),
+    }
 }
 
 /// The yt-dlp argument list (separate for testing).
@@ -208,7 +230,7 @@ pub fn build_args(job: &StreamJob<'_>) -> Vec<String> {
     a.push("-P".into());
     a.push(format!("temp:{}", job.temp_dir.to_string_lossy()));
     a.push("-o".into());
-    a.push("%(title).120B.%(ext)s".into());
+    a.push(output_template(job.name));
     a.extend(job.extra_args.iter().cloned());
     for (k, v) in job.headers {
         a.push("--add-header".into());
@@ -406,6 +428,7 @@ mod tests {
                 "--js-runtimes".to_string(),
                 "quickjs:C:/c/qjs.exe".to_string(),
             ],
+            name: None,
         });
         let joined = a.join("\n");
         assert!(joined.contains("--add-header\nReferer:https://site.example/page"));
@@ -415,6 +438,23 @@ mod tests {
         assert!(joined.contains("--js-runtimes\nquickjs:C:/c/qjs.exe"));
         // The URL comes last, after `--`.
         assert_eq!(&a[a.len() - 2..], ["--", "-https://x.example/master.m3u8"]);
+    }
+
+    #[test]
+    fn a_playlist_is_named_after_its_page() {
+        assert_eq!(output_template(None), "%(title).120B.%(ext)s");
+        assert_eq!(output_template(Some("  ")), "%(title).120B.%(ext)s");
+        assert_eq!(
+            output_template(Some("Some Film (2025).mp4")),
+            "Some Film (2025).%(ext)s"
+        );
+        assert_eq!(output_template(Some("clip.M3U8")), "clip.%(ext)s");
+        // `%` would start a template field.
+        assert_eq!(output_template(Some("100% Real")), "100%% Real.%(ext)s");
+        assert_eq!(
+            output_template(Some("no-extension")),
+            "no-extension.%(ext)s"
+        );
     }
 
     /// A job whose final dir is the fake script's own dir (the scripts write there).
@@ -427,6 +467,7 @@ mod tests {
             temp_dir: tmp,
             quality: Quality::Best,
             extra_args: &[],
+            name: None,
         }
     }
 

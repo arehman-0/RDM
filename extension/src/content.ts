@@ -8,6 +8,7 @@ import type { SendResult } from "./lib/bridge";
 import type { MediaItem } from "./lib/items";
 import { isHttpUrl } from "./lib/media";
 import { MSG } from "./lib/messages";
+import { parseProbeReport } from "./lib/probe";
 import type { DomMedia, MediaList, Request, SettingsReply } from "./lib/protocol";
 import { siteDisabled } from "./lib/settings";
 import { isKnownVideoPage } from "./lib/sites";
@@ -124,6 +125,15 @@ document.addEventListener(
   },
   true
 );
+// Playlists the page's player loaded, found by page-probe.ts (MAIN world, same
+// frame). The page could post this message too, so it is validated; at worst
+// a page adds an http(s) URL to its own list, which only the user can send.
+window.addEventListener("message", (e) => {
+  if (e.source !== window) return;
+  const r = parseProbeReport(e.data);
+  if (r) void send({ type: "player-manifest", url: r.url, kind: r.kind, master: r.master, frameUrl: location.href });
+});
+
 // YouTube is a single-page app: follow its navigations.
 document.addEventListener("yt-navigate-finish", () => {
   lastSignature = "";

@@ -3,7 +3,7 @@
 //   node test/serve.mjs            → http://127.0.0.1:8080/test-page.html
 // Test videos are generated with ffmpeg on first run (ffmpeg must be on PATH).
 import { createServer } from "node:http";
-import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -56,8 +56,47 @@ function prepare() {
 
 prepare();
 
+// A "third-party player" imitation for blob-player.html: the HLS playlists
+// hide behind .txt URLs served as text/plain, and everything under /disguised/
+// is refused without a Referer or Origin (like hotlink-protected CDNs).
+function disguised(url, req, res) {
+  if (!req.headers.referer && !req.headers.origin) {
+    console.log(`403 ${url.pathname} (no Referer/Origin)`);
+    res.writeHead(403).end("hotlink protection: Referer or Origin required");
+    return true;
+  }
+  const hls = join(MEDIA, "hls");
+  const send = (type, body) => {
+    console.log(`${req.method} ${url.pathname} (${type})`);
+    res.writeHead(200, { "Content-Type": type, "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" });
+    res.end(req.method === "HEAD" ? undefined : body);
+  };
+  if (url.pathname === "/disguised/master.txt") {
+    send("text/plain", "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1600000,RESOLUTION=640x360\nvariant.txt\n");
+    return true;
+  }
+  if (url.pathname === "/disguised/variant.txt") {
+    const list = readFileSync(join(hls, "index.m3u8"), "utf8").replace(/^(seg\d+\.ts)$/gm, "/disguised/$1");
+    send("text/plain", list);
+    return true;
+  }
+  const seg = /^\/disguised\/(seg\d+\.ts)$/.exec(url.pathname);
+  if (seg && existsSync(join(hls, seg[1]))) {
+    send("application/octet-stream", readFileSync(join(hls, seg[1])));
+    return true;
+  }
+  // The extension's MAIN-world probe, loaded first by the test page the way
+  // Chrome injects it at document_start.
+  if (url.pathname === "/disguised/page-probe.js") {
+    send("text/javascript", readFileSync(join(ROOT, "..", "dist", "page-probe.js")));
+    return true;
+  }
+  return false;
+}
+
 createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
+  if (url.pathname.startsWith("/disguised/") && disguised(url, req, res)) return;
   const rel = normalize(decodeURIComponent(url.pathname === "/" ? "/test-page.html" : url.pathname)).replace(/^([\\/])+/, "");
   const file = resolve(ROOT, rel);
   if (!file.startsWith(ROOT + sep) || !existsSync(file) || !statSync(file).isFile()) {

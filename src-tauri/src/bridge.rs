@@ -469,7 +469,9 @@ impl BridgeJob {
     /// Provisional display name (the engine may still refine a plain file's
     /// name from `Content-Disposition`; yt-dlp names a stream).
     pub fn display_name(&self) -> String {
-        if self.stream {
+        // A playlist named after its page shows that name; other streams
+        // are named by yt-dlp once resolved.
+        if self.stream && (!self.manifest || self.name_hint.is_none()) {
             RESOLVING_NAME.to_string()
         } else {
             self.name_hint
@@ -706,7 +708,9 @@ impl DownloadRequest {
             manifest,
             quality: if stream { quality } else { None },
             headers,
-            name_hint: if stream { None } else { file_name },
+            // yt-dlp names a site video itself; a playlist has no title of its
+            // own, so the page's title (sent as fileName) names it.
+            name_hint: if stream && !manifest { None } else { file_name },
             page_url,
             media_type,
             size: self.size,
@@ -2013,6 +2017,45 @@ mod tests {
     }
 
     #[test]
+    fn a_disguised_player_playlist_is_a_named_manifest_job() {
+        let req = |v: serde_json::Value| serde_json::from_value::<DownloadRequest>(v).unwrap();
+        // What the extension sends for a blob: player whose playlist URL
+        // doesn't end in .m3u8: the media type marks it, the page title names it.
+        let j = req(json!({
+            "url": "https://cdn.example.net/x/list.txt?token=abc",
+            "pageUrl": "https://player.example.org/embed/1",
+            "referer": "https://player.example.org/",
+            "headers": { "Origin": "https://player.example.org" },
+            "kind": "stream",
+            "mediaType": "application/vnd.apple.mpegurl",
+            "fileName": "Some Film (2025).mp4",
+        }))
+        .validate()
+        .unwrap();
+        assert!(j.stream && j.manifest);
+        assert_eq!(j.url, "https://cdn.example.net/x/list.txt?token=abc");
+        assert_eq!(j.name_hint.as_deref(), Some("Some Film (2025).mp4"));
+        assert_eq!(j.display_name(), "Some Film (2025).mp4");
+        assert!(j
+            .headers
+            .contains(&("Origin".into(), "https://player.example.org".into())));
+        assert!(j
+            .headers
+            .contains(&("Referer".into(), "https://player.example.org/".into())));
+        // Without the media type the same URL is not trusted as a playlist.
+        let e = req(json!({ "url": "https://cdn.example.net/x/list.txt", "kind": "stream" }))
+            .validate()
+            .unwrap_err();
+        assert_eq!(e.0, ErrorCode::UnsupportedSite);
+        // A site video keeps yt-dlp's own name.
+        let yt = req(json!({ "url": "https://www.youtube.com/watch?v=abc", "fileName": "x.mp4" }))
+            .validate()
+            .unwrap();
+        assert_eq!(yt.name_hint, None);
+        assert_eq!(yt.display_name(), RESOLVING_NAME);
+    }
+
+    #[test]
     fn kind_resolution() {
         let req = |v: serde_json::Value| serde_json::from_value::<DownloadRequest>(v).unwrap();
         let yt = "https://www.youtube.com/watch?v=abc";
@@ -2625,7 +2668,7 @@ mod policy_tests {
                 "referer": "https://site.example/watch",
                 "kind": "stream",
                 "quality": "720p",
-                "fileName": "ignored.mp4"
+                "fileName": "Page Title.mp4"
             }),
             true,
         )
@@ -2636,7 +2679,8 @@ mod policy_tests {
             let job = &started[0];
             assert!(job.stream && job.manifest);
             assert_eq!(job.quality.as_deref(), Some("720"));
-            assert_eq!(job.name_hint, None);
+            // A playlist has no title of its own: the page's names it.
+            assert_eq!(job.name_hint.as_deref(), Some("Page Title.mp4"));
             assert!(job.headers.iter().any(|(k, _)| k == "Referer"));
         }
         // auto + .mpd / by media type: also a manifest, never saved as text.

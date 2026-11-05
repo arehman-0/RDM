@@ -48,6 +48,12 @@ embedded hosts, small video sites), ≥ 70 % download; the rest fail with a clea
 
 ## Phase 2 — Better sniffing for players yt-dlp doesn't know
 
+**Done (2026-11-05): 2.1 (playlists by content) and 2.2 (blob player → its playlist).**
+`page-probe.ts` (MAIN world) reports playlists the player loads, whatever their URL or type;
+"Download" on a `blob:` video now sends the best of them (master first) with the frame's
+`Origin` and an origin-only `Referer`, named after the tab title. Tested against a local
+hls.js player with `.txt` playlists behind a Referer check (`extension/test/blob-player.html`).
+
 1. **Manifest detection by content, not name.** Some sites serve HLS as `/playlist?id=…` or
    `.txt`, or `application/octet-stream`. For responses ≤ 64 KB with an unknown type, the
    extension can't read bodies via `webRequest`, so: in the content script, wrap

@@ -51,6 +51,17 @@ export function guessFileName(url: string, kind: MediaKind, cd?: string | null):
   return `${stem}.${DEFAULT_EXT[kind]}`;
 }
 
+/**
+ * Name for a stream downloaded from a page's player: the tab title (what the
+ * user sees, e.g. "Some Film (2025) — Watch online"), cleaned, as `.mp4`.
+ * Falls back to the playlist's own name.
+ */
+export function streamFileName(title: string | null | undefined, url: string, kind: MediaKind): string {
+  const t = cleanName((title ?? "").replace(/\s+/g, " ").trim().slice(0, 150));
+  if (t) return `${t.replace(/\.(m3u8|mpd|mp4)$/i, "")}.mp4`;
+  return guessFileName(url, kind).replace(/\.(m3u8|mpd)$/i, ".mp4");
+}
+
 /** "1080p", "720p", "4K" … from URL hints, if any. */
 export function guessQuality(url: string): string | null {
   const s = decode(url).toLowerCase();

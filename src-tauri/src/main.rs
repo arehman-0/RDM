@@ -360,13 +360,17 @@ async fn enqueue_download(ctx: &Ctx, d: NewDownload) -> Result<StartResult, Host
             })?;
     }
 
-    let name_hint = if is_stream {
+    // A site video is named by yt-dlp; a playlist from a page's player by the
+    // page title the extension sent (a playlist has no title of its own).
+    let name_hint = if is_stream && !d.manifest {
         None
     } else {
         d.name_hint.as_deref().and_then(safe_file_name)
     };
-    let file_name = if is_stream {
+    let file_name = if is_stream && name_hint.is_none() {
         bridge::RESOLVING_NAME.to_string()
+    } else if is_stream {
+        name_hint.clone().unwrap_or_default()
     } else {
         save_path
             .as_ref()
@@ -600,6 +604,7 @@ async fn run_manifest_pipeline(ctx: &Ctx, entry: QueueEntry, cancel: youtube::Ca
             dir: &entry.dir,
             temp_dir: &temp_dir,
             quality,
+            name: entry.name_hint.as_deref(),
         },
         &cancel,
         |p| {

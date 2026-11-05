@@ -17,7 +17,7 @@ export const MSG = {
   blockedUrl: "This link type can't be downloaded (only http and https links are supported).",
   drm: "This site uses protected video; it can't be downloaded.",
   blobUnsupported:
-    "This page streams its video through the player (blob:). IDM Replica can only resolve such videos on supported sites (YouTube, Vimeo, …).",
+    "No video stream found on this page yet. Play the video for a few seconds, then click Download again. (If it still fails, the site may hide or protect its stream.)",
   siteUnsupported: "IDM Replica can't resolve videos from this site yet.",
   nothingFound: "No video found on this page yet. Start playing it and try again.",
   tooMany: "IDM Replica is busy: too many downloads are waiting for confirmation. Accept or dismiss some first.",
